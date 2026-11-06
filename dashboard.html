@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sell Grid — сервер 24/7</title>
+<style>
+  :root { --bg:#0b0e11; --panel:#12161c; --border:#1e2329; --text:#eaecef; --muted:#848e9c; --green:#0ecb81; --red:#f6465d; --yellow:#f0b90b; --violet:#a855f7; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding:14px 20px; background:var(--panel); border-bottom:1px solid var(--border); }
+  h1 { font-size:1.1rem; } h1 span { color:var(--red); }
+  .badges { display:flex; gap:6px; flex-wrap:wrap; }
+  .badge { font-size:.75rem; padding:4px 10px; border-radius:20px; background:#1a1f27; color:var(--muted); }
+  .on { background:rgba(14,203,129,.15); color:var(--green); }
+  .err { background:rgba(246,70,93,.15); color:var(--red); }
+  .warn { background:rgba(240,185,11,.15); color:var(--yellow); }
+  .vio { background:rgba(168,85,247,.15); color:#c4b5fd; }
+  main { padding:16px; display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .card h2 { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:8px; }
+  .kv { display:flex; justify-content:space-between; font-size:.85rem; padding:3px 0; }
+  .kv span:first-child { color:var(--muted); }
+  .kv b { font-variant-numeric:tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  th { text-align:left; color:var(--muted); font-weight:500; padding:4px; border-bottom:1px solid var(--border); }
+  td { padding:5px 4px; border-bottom:1px solid #161b22; font-variant-numeric:tabular-nums; }
+  .pos { color:var(--green); } .neg { color:var(--red); } .mut { color:var(--muted); }
+  .log { grid-column:1/-1; font:12px ui-monospace,monospace; max-height:420px; overflow:auto; white-space:pre-wrap; line-height:1.5; }
+  button { border:none; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; font-size:.85rem; }
+  .b-pause { background:#2b3139; color:var(--text); } .b-run { background:var(--green); color:#000; }
+  .bar { height:4px; background:#1a1f27; border-radius:2px; overflow:hidden; margin-top:3px; }
+  .bar i { display:block; height:100%; background:var(--yellow); }
+  a { color:var(--muted); font-size:.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sell <span>Grid</span> — сервер 24/7</h1>
+  <div class="badges" id="badges"></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/manual">ручная страница</a>
+    <button id="toggle" class="b-pause">…</button>
+  </div>
+</header>
+<main>
+  <div class="card"><h2>Состояние</h2><div id="state"></div></div>
+  <div class="card"><h2>Позиции (лимит удержания)</h2><div id="positions"></div></div>
+  <div class="card"><h2>Цели и монеты под контролем</h2><div id="watch"></div></div>
+  <div class="card log"><h2>Лог</h2><div id="log"></div></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const f = (n, d=4) => n == null || isNaN(n) ? '—' : Math.abs(n) >= 1000 ? n.toFixed(2) : Math.abs(n) >= 1 ? n.toFixed(d) : n.toFixed(6);
+const ago = t => { if (!t) return '—'; const s = Math.round((Date.now()-t)/1000); return s < 60 ? s+' с назад' : Math.round(s/60)+' мин назад'; };
+let paused = false;
+
+async function load() {
+  try {
+    const r = await fetch('/api/status');
+    const s = await r.json();
+    paused = s.mode.paused;
+    const fresh = s.lastCycleAt && Date.now() - s.lastCycleAt < 30000;
+    $('badges').innerHTML = [
+      `<span class="badge ${fresh ? 'on' : 'err'}">● ${fresh ? 'работает' : 'нет циклов'}</span>`,
+      `<span class="badge ${s.mode.testnet ? 'warn' : 'err'}">${s.mode.testnet ? 'TESTNET' : 'MAINNET'}</span>`,
+      `<span class="badge ${s.mode.live ? 'on' : 'warn'}">${s.mode.live ? 'LIVE' : 'SIM'}</span>`,
+      s.mode.shukin ? '<span class="badge vio">Щукин</span>' : '',
+      paused ? '<span class="badge warn">ПАУЗА</span>' : '',
+      s.day.blocked ? '<span class="badge err">ДНЕВНОЙ ЛИМИТ</span>' : '',
+      !s.mode.hasKeys ? '<span class="badge err">НЕТ КЛЮЧЕЙ</span>' : ''
+    ].join('');
+    $('toggle').textContent = paused ? '▶ Возобновить' : '⏸ Пауза (снять сетки)';
+    $('toggle').className = paused ? 'b-run' : 'b-pause';
+
+    const c = s.config;
+    $('state').innerHTML = [
+      ['Последний цикл', ago(s.lastCycleAt)],
+      ['Циклов', s.cycles],
+      ['Ошибка', s.lastError ? `<span class="neg">${esc(s.lastError)}</span>` : '<span class="mut">нет</span>'],
+      ['PnL сегодня (UTC)', `<span class="${s.day.pnl >= 0 ? 'pos' : 'neg'}">${s.day.pnl >= 0 ? '+' : ''}${s.day.pnl.toFixed(2)} USDT</span> · ${s.day.trades} сделок`],
+      ['Лимит убытка / день', c.maxDailyLoss + ' USDT'],
+      ['Сетка', `${c.gridStepPct}% × ${c.gridLevels} · ${c.orderUsdt} USDT/ур`],
+      ['TP / SL', `${c.tpPct}% / ${c.slPct}%`],
+      ['Макс. удержание', c.maxHoldMin + ' мин'],
+      ['Макс. в одну монету', c.maxPosUsdt + ' USDT'],
+      ['Монет / позиций', `${c.maxSymbols} / ${c.maxOpenPositions}`],
+      ['Открытых ордеров', s.ordersCount]
+    ].map(([k, v]) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`).join('');
+
+    $('positions').innerHTML = s.positions.length ? `<table><tr><th>Монета</th><th>Side</th><th>Entry</th><th>uPnL</th><th>Возраст</th></tr>` +
+      s.positions.map(p => {
+        const pct = p.ageMin != null ? Math.min(100, p.ageMin / c.maxHoldMin * 100) : 0;
+        return `<tr><td><b>${esc(p.symbol.replace(/USDT$/,''))}</b></td><td class="${p.side==='Sell'?'neg':'pos'}">${p.side==='Sell'?'SHORT':'LONG'} ${f(p.size)}</td><td>${f(p.avgPrice)}</td>
+          <td class="${p.unrealisedPnl>=0?'pos':'neg'}">${p.unrealisedPnl>=0?'+':''}${p.unrealisedPnl.toFixed(3)}</td>
+          <td>${p.ageMin != null ? Math.floor(p.ageMin) + ' / ' + c.maxHoldMin + ' мин' : '…'}<div class="bar"><i style="width:${pct}%;background:${pct>85?'var(--red)':'var(--yellow)'}"></i></div></td></tr>`;
+      }).join('') + '</table>' : '<div class="mut" style="font-size:.85rem">Нет открытых позиций</div>';
+
+    const w = Object.entries(s.watch);
+    const cd = Object.entries(s.cooldown);
+    $('watch').innerHTML =
+      `<div class="kv"><span>Цели скана</span><b>${s.targets.map(esc).join(', ') || '—'}</b></div>` +
+      (cd.length ? `<div class="kv"><span>Кулдаун</span><b>${cd.map(([k,t]) => esc(k) + ' ' + Math.ceil((t-Date.now())/60000) + 'м').join(', ')}</b></div>` : '') +
+      (w.length ? `<table style="margin-top:6px"><tr><th>Монета</th><th>Mid</th><th>RSI</th><th>ATR%</th><th>Статус</th></tr>` +
+        w.map(([sym, x]) => `<tr><td><b>${esc(sym.replace(/USDT$/,''))}</b></td><td>${f(x.mid)}</td><td>${x.rsi != null ? x.rsi.toFixed(0) : '—'}</td>
+          <td>${x.atrPct != null ? x.atrPct.toFixed(2) : '—'}</td><td class="mut">${esc(x.status)}</td></tr>`).join('') + '</table>' : '') +
+      (s.hotList.length ? `<div class="mut" style="font-size:.75rem;margin-top:8px">Горячие 1m: ${s.hotList.map(h => esc(h.symbol.replace(/USDT$/,'')) + ' ' + h.range15.toFixed(1) + '%').join(' · ')}</div>` : '');
+
+    $('log').innerHTML = s.logs.map(l => `<div class="${l.includes('❌') ? 'neg' : l.includes('✅') ? 'pos' : 'mut'}">${esc(l)}</div>`).join('');
+  } catch (e) {
+    $('badges').innerHTML = '<span class="badge err">нет связи с сервером</span>';
+  }
+}
+$('toggle').onclick = async () => {
+  if (!paused && !confirm('Пауза: снять все сетки бота? Позиции останутся под контролем (TP/SL/лимит времени).')) return;
+  await fetch(paused ? '/api/resume' : '/api/pause', { method: 'POST' });
+  load();
+};
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
