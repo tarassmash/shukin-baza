@@ -254,12 +254,12 @@ async function cancelOurOrders(symbol, orders, filterFn) {
   return ours.length;
 }
 
-async function closeMarket(pos) {
+async function closeMarket(pos, why) {
   const side = pos.side === 'Buy' ? 'Sell' : 'Buy';
   const j = await signedRequest('POST', '/v5/order/create', {
     category: CFG.category, symbol: pos.symbol, side,
     orderType: 'Market', qty: String(pos.size), reduceOnly: true, positionIdx: 0,
-    orderLinkId: 'sg_close_' + Date.now()
+    orderLinkId: 'sg_close_' + (why || 'x') + '_' + Date.now()
   });
   if (j.retCode !== 0) throw new Error(`close ${pos.symbol}: ${j.retMsg}`);
   log(`${pos.symbol}: позиция ${pos.side} ${pos.size} закрыта market (uPnL ${pos.unrealisedPnl.toFixed(3)})`, 'ok');
@@ -281,6 +281,16 @@ async function placeMakerExit(symbol, pos, tpPrice, inst) {
   }
   if (j.retCode === 0) log(`${symbol}: maker TP ${pos.size} @ ${price}`, 'ok');
   else log(`${symbol}: maker TP fail: ${j.retMsg}`, 'err');
+  return j.retCode === 0 ? body.orderLinkId : '';
+}
+
+// почему наш ордер исчез (отменён биржей и т.п.) — пишем в лог
+async function explainOrder(symbol, orderLinkId) {
+  try {
+    const j = await signedRequest('GET', '/v5/order/history', { category: CFG.category, symbol, orderLinkId });
+    const o = j.result?.list?.[0];
+    if (o) log(`${symbol}: TP-ордер ${o.orderStatus}${o.cancelType && o.cancelType !== 'UNKNOWN' ? ' · ' + o.cancelType : ''}${o.rejectReason && o.rejectReason !== 'EC_NoError' ? ' · ' + o.rejectReason : ''}`);
+  } catch (e) {}
 }
 
 async function placeSellLimit(symbol, qty, price, tp, sl, inst) {
@@ -489,6 +499,12 @@ async function refreshDayPnl() {
     for (const e of j.result?.list || []) {
       orderMap[e.orderId] = { link: e.orderLinkId || '', stop: e.stopOrderType || '' };
       if ((e.orderLinkId || '').startsWith('sg_s_')) botSyms.add(e.symbol);
+      // принудительные закрытия бота (по времени / стопу) → кулдаун, даже после перезапуска
+      const link = e.orderLinkId || '';
+      if (link.startsWith('sg_close_') && !link.startsWith('sg_close_tp_') && CFG.cooldownMin > 0) {
+        const until = parseInt(e.execTime, 10) + CFG.cooldownMin * 60000;
+        if (until > Date.now() && (S.cooldown[e.symbol] || 0) < until) S.cooldown[e.symbol] = until;
+      }
     }
     cursor = j.result?.nextPageCursor || '';
     if (!cursor) break;
@@ -536,7 +552,7 @@ async function processSymbol(symbol, ctx) {
     const movePct = (entry - mid) / entry;
     if (movePct >= tpPct) {
       log(`${symbol}: 🎯 TP ${(movePct * 100).toFixed(2)}%`, 'ok');
-      await closeMarket(pos);
+      await closeMarket(pos, 'tp');
       await cancelOurOrders(symbol, orders);
       S.lastPnlFetch = 0;
       w.status = 'TP';
@@ -544,7 +560,7 @@ async function processSymbol(symbol, ctx) {
     }
     if (movePct <= -slPct) {
       log(`${symbol}: 🚨 SL ${(movePct * 100).toFixed(2)}%`, 'err');
-      await closeMarket(pos);
+      await closeMarket(pos, 'sl');
       await cancelOurOrders(symbol, orders);
       setCooldown(symbol);
       S.targets = S.targets.filter(s => s !== symbol);
@@ -558,9 +574,11 @@ async function processSymbol(symbol, ctx) {
       const okTp = tpOrders.find(o =>
         Math.abs(parseFloat(o.qty) - pos.size) < 1e-9 &&
         Math.abs(parseFloat(o.price) - want) <= Math.max(parseFloat(inst.tickSize) * 2, want * 0.0005));
-      if (!okTp) {
+      if (!okTp && Date.now() - (w.tpAt || 0) > 30000) {
+        if (w.tpLink && !tpOrders.length) await explainOrder(symbol, w.tpLink);
         for (const o of tpOrders) { try { await cancelOrder(symbol, o.orderId); } catch (e) {} }
-        await placeMakerExit(symbol, pos, want, inst);
+        w.tpAt = Date.now();
+        w.tpLink = await placeMakerExit(symbol, pos, want, inst);
       }
     }
     if (!CFG.shukin) { w.status = 'SHORT'; return; }   // обычный режим: без добора
@@ -613,12 +631,16 @@ async function processSymbol(symbol, ctx) {
   let qty = floorToStep(CFG.orderUsdt / mid, inst.qtyStep);
   if (qty < parseFloat(inst.minQty)) qty = parseFloat(inst.minQty);
   const targets = [];
-  for (let i = 1; i <= CFG.gridLevels; i++) targets.push(roundToStep(mid * (1 + gridStep * i), inst.tickSize));
+  // якорь: восстанавливаем по уже стоящим ордерам, переносим только если цена ушла > 1 шага
+  if (!w.anchor && ourSells.length) w.anchor = Math.min(...ourSells.map(o => parseFloat(o.price))) / (1 + gridStep);
+  if (!w.anchor || Math.abs(mid - w.anchor) / w.anchor > gridStep) w.anchor = mid;
+  const anchor = w.anchor;
+  for (let i = 1; i <= CFG.gridLevels; i++) targets.push(roundToStep(anchor * (1 + gridStep * i), inst.tickSize));
 
   // не превышаем потолок позиции с учётом уже стоящих ордеров
   let room = CFG.maxPosUsdt - posUsdt;
 
-  const tol = mid * gridStep * 0.35;
+  const tol = anchor * gridStep * 0.35;
   const matched = new Set();
   const toCancel = [];
   for (const o of ourSells) {
@@ -628,6 +650,8 @@ async function processSymbol(symbol, ctx) {
     else toCancel.push(o);
   }
   for (const o of toCancel) { try { await cancelOrder(symbol, o.orderId); } catch (e) {} }
+  if (toCancel.length) log(`${symbol}: сетка перенесена (снято ${toCancel.length})`);
+  if ((w.noFundsUntil || 0) > Date.now()) { w.status = (pos ? 'SHORT · ' : '') + 'мало баланса'; return; }
 
   let placed = 0;
   for (const px of targets) {
@@ -637,7 +661,9 @@ async function processSymbol(symbol, ctx) {
     const sl = (!CFG.shukin || !pos) ? roundToStep(px * (1 + slPct), inst.tickSize) : null;
     const j = await placeSellLimit(symbol, qty, px, tp, sl, inst);
     if (j.retCode === 0) { placed++; room -= qty * px; }
-    else if (j.retCode === 110007 || j.retCode === 110004) break; // мало баланса
+    else if (j.retCode === 110007 || j.retCode === 110004 || /not enough/i.test(j.retMsg || '')) {
+      w.noFundsUntil = Date.now() + 60000; break;           // мало баланса — пауза 1 мин
+    }
   }
   w.status = (pos ? 'SHORT · ' : '') + `сетка ${matched.size + placed}/${CFG.gridLevels}` + (CFG.shukin && w.signal ? ' · ' + w.signal.reason : '');
 }
@@ -671,7 +697,7 @@ async function cycle() {
         if (CFG.live) {
           try {
             await cancelOurOrders(p.symbol, orders);
-            await closeMarket(p);
+            await closeMarket(p, 'tm');
             delete S.openedAt[p.symbol];
             setCooldown(p.symbol);
             S.targets = S.targets.filter(s => s !== p.symbol);
