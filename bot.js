@@ -757,10 +757,17 @@ function start() {
   // проверка доступа к Bybit из региона сервера
   publicGet('/v5/market/time', {}).then(j => log('Bybit доступен, serverTime ' + (j.result?.timeSecond || '?'), 'ok'))
     .catch(e => log('Bybit НЕ доступен с этого сервера: ' + e.message, 'err'));
-  cycle();
-  timer = setInterval(cycle, CFG.cycleSec * 1000);
+  // ждём, пока Railway погасит старый контейнер, чтобы два бота не работали одновременно
+  const delay = Math.max(0, num('START_DELAY_SEC', 20)) * 1000;
+  if (delay) log(`Первый цикл через ${delay / 1000} с (старый контейнер успевает остановиться)`);
+  setTimeout(() => {
+    if (stopped) return;
+    cycle();
+    timer = setInterval(cycle, CFG.cycleSec * 1000);
+  }, delay);
 }
-function stop() { if (timer) clearInterval(timer); timer = null; }
+let stopped = false;
+function stop() { stopped = true; if (timer) clearInterval(timer); timer = null; }
 
 function status() {
   return {
