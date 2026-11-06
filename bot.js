@@ -298,29 +298,32 @@ async function placeSellLimit(symbol, qty, price, tp, sl, inst) {
   return j;
 }
 
-// ---------------------------------------------------------------- время удержания
-// Время открытия позиции восстанавливаем по истории исполнений:
-// идём от свежих сделок назад, пока размер позиции не станет 0.
-async function getOpenedAt(pos) {
+// ---------------------------------------------------------------- чья позиция и когда открыта
+// По истории исполнений идём от свежих сделок назад, пока размер позиции не станет 0.
+// Так получаем время открытия и сделки, из которых позиция набрана.
+// Позиция «бота», если хоть одна из этих сделок — по ордеру бота (orderLinkId sg_…).
+async function getPosMeta(pos) {
   const c = S.openedAt[pos.symbol];
-  if (c && c.side === pos.side) return c.ts;
+  if (c && c.side === pos.side) return c;
   const j = await signedRequest('GET', '/v5/execution/list', { category: CFG.category, symbol: pos.symbol, limit: 100 });
   if (j.retCode !== 0) throw new Error('executions: ' + j.retMsg);
   const execs = (j.result?.list || []).filter(e => parseFloat(e.execQty || 0) > 0 && (e.execType || 'Trade') !== 'Funding');
   let running = pos.side === 'Buy' ? pos.size : -pos.size;
   const eps = Math.max(pos.size * 1e-6, 1e-12);
-  let ts = 0;
+  let ts = 0, ours = false;
   for (const e of execs) {                 // newest -> oldest
     const q = parseFloat(e.execQty);
     const signed = e.side === 'Buy' ? q : -q;
     running -= signed;
     ts = parseInt(e.execTime, 10);
+    if ((e.orderLinkId || '').startsWith('sg_s_')) ours = true;
     if (Math.abs(running) <= eps) break;
   }
-  if (!ts) ts = pos.createdTime || 0;      // нет сделок за 7 дней → считаем старой
-  S.openedAt[pos.symbol] = { side: pos.side, ts };
-  log(`${pos.symbol}: позиция ${pos.side} открыта ${ts ? new Date(ts).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'давно'}`);
-  return ts;
+  if (!ts) ts = pos.createdTime || 0;      // нет сделок за 7 дней → старая и не наша
+  const meta = { side: pos.side, ts, ours };
+  S.openedAt[pos.symbol] = meta;
+  log(`${pos.symbol}: позиция ${pos.side} ${ours ? 'БОТА' : 'чужая (не трогаю)'}, открыта ${ts ? new Date(ts).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'давно'}`);
+  return meta;
 }
 
 // ---------------------------------------------------------------- индикаторы
@@ -447,7 +450,7 @@ async function maybeRescan() {
   try {
     const hot = await scanUltraVol1m();
     S.hotList = hot;
-    const hotSyms = hot.map(h => h.symbol).filter(s => !inCooldown(s));
+    const hotSyms = hot.map(h => h.symbol).filter(s => !inCooldown(s) && !(S.foreign && S.foreign.has(s)));
     // «липкие» цели: оставляем текущую, пока она ещё в горячем списке
     const keep = S.targets.filter(s => hotSyms.includes(s));
     const next = [...keep];
@@ -474,13 +477,37 @@ async function refreshDayPnl() {
   if (Date.now() - S.lastPnlFetch < 60000) return;
   S.lastPnlFetch = Date.now();
   const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  let sum = 0, n = 0, cursor = '';
+  // сделки за сегодня (+1 день назад, чтобы видеть входы позиций, закрытых сегодня)
+  const orderMap = {};          // orderId -> orderLinkId закрывающего ордера
+  const botSyms = new Set();    // монеты, где сегодня исполнялись входы бота
+  let cursor = '';
+  for (let page = 0; page < 10; page++) {
+    const p = { category: CFG.category, startTime: start - 86400000, endTime: Date.now(), limit: 100 };
+    if (cursor) p.cursor = cursor;
+    const j = await signedRequest('GET', '/v5/execution/list', p);
+    if (j.retCode !== 0) throw new Error('executions(day): ' + j.retMsg);
+    for (const e of j.result?.list || []) {
+      orderMap[e.orderId] = { link: e.orderLinkId || '', stop: e.stopOrderType || '' };
+      if ((e.orderLinkId || '').startsWith('sg_s_')) botSyms.add(e.symbol);
+    }
+    cursor = j.result?.nextPageCursor || '';
+    if (!cursor) break;
+  }
+  // закрытие считается нашим: закрыли ордером бота, или сработал стоп/тейк
+  // позиции на монете, где бот набирал шорт
+  let sum = 0, n = 0;
+  cursor = '';
   for (let page = 0; page < 5; page++) {
     const p = { category: CFG.category, startTime: start, endTime: Date.now(), limit: 100 };
     if (cursor) p.cursor = cursor;
     const j = await signedRequest('GET', '/v5/position/closed-pnl', p);
     if (j.retCode !== 0) throw new Error('closed-pnl: ' + j.retMsg);
-    for (const r of j.result?.list || []) { sum += parseFloat(r.closedPnl || 0); n++; }
+    for (const r of j.result?.list || []) {
+      const o = orderMap[r.orderId] || { link: '', stop: '' };
+      const ours = o.link.startsWith('sg_') || (!o.link && botSyms.has(r.symbol));
+      if (!ours) continue;
+      sum += parseFloat(r.closedPnl || 0); n++;
+    }
     cursor = j.result?.nextPageCursor || '';
     if (!cursor) break;
   }
@@ -629,11 +656,14 @@ async function cycle() {
     S.positions = positions;
     S.ordersCount = orders.length;
 
-    // 1) лимит удержания — для ВСЕХ позиций аккаунта
-    const alive = [];
+    // 1) лимит удержания — только для позиций, открытых ботом
+    const alive = [];        // позиции бота
+    const foreign = new Set(); // монеты с чужими позициями (и с неизвестной принадлежностью)
     for (const p of positions) {
-      let opened = 0;
-      try { opened = await getOpenedAt(p); } catch (e) { log(`${p.symbol}: время открытия — ${e.message}`, 'err'); alive.push(p); continue; }
+      let meta;
+      try { meta = await getPosMeta(p); } catch (e) { log(`${p.symbol}: история сделок — ${e.message}`, 'err'); foreign.add(p.symbol); continue; }
+      if (!meta.ours) { foreign.add(p.symbol); continue; }
+      const opened = meta.ts;
       const ageMin = (Date.now() - opened) / 60000;
       p.ageMin = ageMin;
       if (CFG.maxHoldMin > 0 && ageMin >= CFG.maxHoldMin) {
@@ -654,7 +684,8 @@ async function cycle() {
     }
     for (const s of Object.keys(S.openedAt)) if (!positions.find(p => p.symbol === s)) delete S.openedAt[s];
 
-    // 2) скан целей
+    // 2) скан целей (монеты с чужими позициями пропускаем)
+    S.foreign = foreign;
     if (!S.paused && !dailyBlocked) await maybeRescan();
 
     // 3) вселенная: цели + позиции + монеты с нашими ордерами
@@ -666,7 +697,8 @@ async function cycle() {
     const results = await Promise.allSettled([...universe].map(sym => {
       const pos = posBySym[sym] || null;
       let allowGrid = S.targets.includes(sym), blockReason = '';
-      if (S.paused) { allowGrid = false; blockReason = 'пауза'; }
+      if (foreign.has(sym)) { allowGrid = false; blockReason = 'там чужая позиция'; }
+      else if (S.paused) { allowGrid = false; blockReason = 'пауза'; }
       else if (dailyBlocked) { allowGrid = false; blockReason = 'дневной лимит убытка'; }
       else if (inCooldown(sym)) { allowGrid = false; blockReason = 'кулдаун'; }
       else if (!S.targets.includes(sym)) { blockReason = 'не в цели'; }
@@ -719,6 +751,7 @@ function status() {
     cooldown: Object.fromEntries(Object.entries(S.cooldown).filter(([, t]) => t > Date.now())),
     positions: S.positions.map(p => ({
       symbol: p.symbol, side: p.side, size: p.size, avgPrice: p.avgPrice, unrealisedPnl: p.unrealisedPnl,
+      ours: S.openedAt[p.symbol] ? !!S.openedAt[p.symbol].ours : null,
       openedAt: S.openedAt[p.symbol]?.ts || null,
       ageMin: S.openedAt[p.symbol]?.ts ? (Date.now() - S.openedAt[p.symbol].ts) / 60000 : null
     })),

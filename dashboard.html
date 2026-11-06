@@ -45,7 +45,7 @@
 </header>
 <main>
   <div class="card"><h2>Состояние</h2><div id="state"></div></div>
-  <div class="card"><h2>Позиции (лимит удержания)</h2><div id="positions"></div></div>
+  <div class="card"><h2>Позиции (лимит удержания — только позиции бота)</h2><div id="positions"></div></div>
   <div class="card"><h2>Цели и монеты под контролем</h2><div id="watch"></div></div>
   <div class="card log"><h2>Лог</h2><div id="log"></div></div>
 </main>
@@ -92,7 +92,9 @@ async function load() {
     $('positions').innerHTML = s.positions.length ? `<table><tr><th>Монета</th><th>Side</th><th>Entry</th><th>uPnL</th><th>Возраст</th></tr>` +
       s.positions.map(p => {
         const pct = p.ageMin != null ? Math.min(100, p.ageMin / c.maxHoldMin * 100) : 0;
-        return `<tr><td><b>${esc(p.symbol.replace(/USDT$/,''))}</b></td><td class="${p.side==='Sell'?'neg':'pos'}">${p.side==='Sell'?'SHORT':'LONG'} ${f(p.size)}</td><td>${f(p.avgPrice)}</td>
+        if (p.ours === false) return `<tr class="mut"><td><b>${esc(p.symbol.replace(/USDT$/,''))}</b></td><td>${p.side==='Sell'?'SHORT':'LONG'} ${f(p.size)}</td><td>${f(p.avgPrice)}</td>
+          <td>${p.unrealisedPnl>=0?'+':''}${p.unrealisedPnl.toFixed(3)}</td><td>чужая — не трогаю</td></tr>`;
+        return `<tr><td><b>${esc(p.symbol.replace(/USDT$/,''))}</b> <span class="badge vio" style="padding:1px 6px">бот</span></td><td class="${p.side==='Sell'?'neg':'pos'}">${p.side==='Sell'?'SHORT':'LONG'} ${f(p.size)}</td><td>${f(p.avgPrice)}</td>
           <td class="${p.unrealisedPnl>=0?'pos':'neg'}">${p.unrealisedPnl>=0?'+':''}${p.unrealisedPnl.toFixed(3)}</td>
           <td>${p.ageMin != null ? Math.floor(p.ageMin) + ' / ' + c.maxHoldMin + ' мин' : '…'}<div class="bar"><i style="width:${pct}%;background:${pct>85?'var(--red)':'var(--yellow)'}"></i></div></td></tr>`;
       }).join('') + '</table>' : '<div class="mut" style="font-size:.85rem">Нет открытых позиций</div>';
