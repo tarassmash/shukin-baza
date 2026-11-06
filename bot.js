@@ -710,6 +710,14 @@ async function cycle() {
     }
     for (const s of Object.keys(S.openedAt)) if (!positions.find(p => p.symbol === s)) delete S.openedAt[s];
 
+    // ордера бота на монетах с чужими позициями (хвосты) — снимаем, чтобы не задеть чужую позицию
+    for (const sym of foreign) {
+      if (orders.some(o => o.symbol === sym && isOurs(o))) {
+        log(`${sym}: там чужая позиция — снимаю ордера бота`);
+        await cancelOurOrders(sym, orders);
+      }
+    }
+
     // 2) скан целей (монеты с чужими позициями пропускаем)
     S.foreign = foreign;
     if (!S.paused && !dailyBlocked) await maybeRescan();
