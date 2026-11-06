@@ -1,0 +1,2254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sell Grid — Bybit Short</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0b0e11;
+    --panel: #12161c;
+    --border: #1e2329;
+    --text: #eaecef;
+    --muted: #848e9c;
+    --green: #0ecb81;
+    --red: #f6465d;
+    --blue: #3861fb;
+    --yellow: #f0b90b;
+    --input: #1a1f27;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 1.15rem; font-weight: 600; }
+  header h1 span { color: var(--red); }
+  .badge {
+    font-size: 0.75rem; padding: 4px 10px; border-radius: 20px;
+    background: #1a1f27; color: var(--muted);
+  }
+  .badge.on { background: rgba(14,203,129,.15); color: var(--green); }
+  .badge.err { background: rgba(246,70,93,.15); color: var(--red); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    min-height: calc(100vh - 56px);
+  }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .main { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  h2 {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 16px 0 8px;
+  }
+  h2:first-child { margin-top: 0; }
+
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+  }
+  .row label { font-size: 0.85rem; color: var(--muted); flex: 1; }
+  input, select {
+    background: var(--input); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 6px 8px;
+    font-size: 0.85rem; width: 110px;
+  }
+  input[type="checkbox"] { width: auto; }
+  input[type="password"], #apiKey, #apiSecret { width: 100%; }
+
+  .btn {
+    width: 100%; border: none; border-radius: 8px; padding: 10px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer; margin-top: 8px;
+  }
+  .btn-start { background: var(--green); color: #000; }
+  .btn-stop { background: #2b3139; color: var(--text); }
+  .btn-once { background: var(--blue); color: #fff; }
+  .btn-sec { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .btn-scan { background: rgba(246,70,93,.2); border: 1px solid var(--red); color: var(--red); }
+  .btn-ultra {
+    background: rgba(240,185,11,.12); border: 1px solid var(--yellow); color: #f0b90b;
+  }
+  .btn-shukin {
+    background: rgba(168, 85, 247, 0.15); border: 1px solid #a855f7; color: #c4b5fd;
+  }
+  .btn-shukin.active {
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: #fff; border-color: #c4b5fd;
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.35);
+  }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .info {
+    font-size: 0.8rem; color: var(--muted); line-height: 1.45;
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; margin-bottom: 8px;
+  }
+
+  .stats {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; margin-top: 10px;
+  }
+  .stats .row { margin-bottom: 4px; }
+  .stats .val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .log {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; height: 200px; overflow-y: auto;
+    font-size: 0.75rem; font-family: ui-monospace, monospace; margin-top: 10px;
+  }
+  .log div { margin-bottom: 3px; }
+
+  #chart {
+    flex: 1; min-height: 320px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .sub-charts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .sub-chart-wrap {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+  }
+  .sub-chart-label {
+    font-size: 0.7rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .05em; padding: 6px 10px 0; font-weight: 600;
+  }
+  .sub-chart {
+    height: 110px; width: 100%;
+  }
+
+  .pos-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px;
+  }
+  .pos-card .k { font-size: 0.75rem; color: var(--muted); }
+  .pos-card .v { font-size: 1rem; font-weight: 600; }
+  .pos-card .v.pos { color: var(--green); }
+  .pos-card .v.neg { color: var(--red); }
+
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; z-index: 99;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; min-width: 200px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4); display: none;
+  }
+  .toast.show { display: block; }
+  .toast.ok { border-color: var(--green); }
+  .toast.err { border-color: var(--red); }
+
+  .targets-box {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px; margin-top: 8px;
+    max-height: 280px; overflow-y: auto;
+  }
+  .targets-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px; gap: 6px;
+  }
+  .targets-head span {
+    font-size: 0.72rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .05em; font-weight: 600;
+  }
+  .targets-head button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 6px; padding: 3px 8px;
+    font-size: 0.7rem; cursor: pointer;
+  }
+  .targets-head button:hover { border-color: var(--red); color: var(--red); }
+  .target-item {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel);
+    margin-bottom: 5px; cursor: pointer; transition: border-color .15s;
+  }
+  .target-item:hover { border-color: #3a4450; }
+  .target-item.active { border-color: var(--yellow); }
+  .target-item .sym { font-size: 0.82rem; font-weight: 700; }
+  .target-item .meta {
+    font-size: 0.7rem; color: var(--muted);
+    display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  }
+  .target-item .chg.up { color: var(--green); font-weight: 600; }
+  .target-item .chg.dn { color: var(--red); font-weight: 600; }
+  .target-item .rsi { font-variant-numeric: tabular-nums; }
+  .targets-empty {
+    font-size: 0.78rem; color: var(--muted); padding: 10px 4px; text-align: center;
+  }
+
+  .watch-section { margin-bottom: 4px; }
+  .watch-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+  }
+  .watch-head h3 {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600;
+  }
+  .watch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  .watch-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px; cursor: pointer;
+    transition: border-color .15s;
+  }
+  .watch-card:hover { border-color: #3a4450; }
+  .watch-card.active { border-color: var(--yellow); }
+  .watch-card.spike { border-color: var(--red); box-shadow: 0 0 0 1px rgba(246,70,93,.25); }
+  .watch-card .wc-top {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px;
+  }
+  .watch-card .wc-sym { font-weight: 700; font-size: 0.88rem; }
+  .watch-card .wc-badge {
+    font-size: 0.65rem; padding: 2px 6px; border-radius: 10px;
+    background: #1a1f27; color: var(--muted);
+  }
+  .watch-card .wc-badge.pos { background: rgba(246,70,93,.2); color: var(--red); }
+  .watch-card .wc-badge.ord { background: rgba(56,97,251,.2); color: #93b4ff; }
+  .watch-card .wc-badge.ok { background: rgba(14,203,129,.15); color: var(--green); }
+  .watch-card .wc-badge.warn { background: rgba(240,185,11,.15); color: var(--yellow); }
+  .watch-card .wc-mini {
+    height: 72px; width: 100%; border-radius: 6px;
+    background: #0d1117; margin-bottom: 6px; overflow: hidden;
+  }
+  .watch-card .wc-meta {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px;
+    font-size: 0.72rem; color: var(--muted);
+  }
+  .watch-card .wc-meta b { color: var(--text); font-weight: 600; }
+  .watch-card .wc-meta .up { color: var(--green); }
+  .watch-card .wc-meta .dn { color: var(--red); }
+  .watch-empty {
+    font-size: 0.8rem; color: var(--muted); padding: 12px;
+    text-align: center; border: 1px dashed var(--border); border-radius: 10px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sell <span>Grid</span> — Short</h1>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span class="badge" id="connBadge">● Связь</span>
+    <span class="badge" id="runBadge">Стоп</span>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Bybit API</h2>
+    <div class="row" style="flex-direction:column;align-items:stretch;">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="Key" autocomplete="off" />
+    </div>
+    <div class="row" style="flex-direction:column;align-items:stretch;">
+      <label>API Secret</label>
+      <input type="password" id="apiSecret" placeholder="Secret" autocomplete="off" />
+    </div>
+    <div class="row">
+      <label>Testnet</label>
+      <input type="checkbox" id="testnet" />
+    </div>
+    <div class="row">
+      <label>Category</label>
+      <select id="category">
+        <option value="linear" selected>linear (USDT perp)</option>
+        <option value="inverse">inverse</option>
+      </select>
+    </div>
+    <button class="btn btn-sec" id="saveKeysBtn">Сохранить</button>
+    <button class="btn btn-sec" id="testConnBtn">Проверить связь</button>
+
+    <h2>Инструмент</h2>
+    <div class="row">
+      <label>Символ</label>
+      <input id="symbol" value="BTCUSDT" style="width:120px;text-transform:uppercase;" />
+    </div>
+    <div class="row">
+      <label>Таймфрейм</label>
+      <select id="interval">
+        <option value="1">1m</option>
+        <option value="3">3m</option>
+        <option value="5" selected>5m</option>
+        <option value="15">15m</option>
+      </select>
+    </div>
+    <button class="btn btn-sec" id="loadChartBtn">Загрузить график</button>
+    <button class="btn btn-scan" id="scanBtn">🔍 Найти пампы под Short</button>
+    <button class="btn btn-ultra" id="ultraVolBtn" title="Скан USDT-перпов по свечам 1m: кто сейчас дёргается сильнее всех">⚡ Найти ультра-волатильные (1m сейчас)</button>
+    <button class="btn btn-shukin" id="shukinBtn" title="Логика Дмитрия Щукина: шорт от пампа, сетка от 1%, тейк от 0.7%, аварийный стоп 10%">⚡ Режим Щукина</button>
+
+    <div class="targets-box" id="targetsBox">
+      <div class="targets-head">
+        <span>Цели (клик → график)</span>
+        <button type="button" id="clearTargetsBtn" title="Очистить список">Очистить</button>
+      </div>
+      <div id="targetsList"><div class="targets-empty">Нажми «Найти пампы» или «ультра-волатильные 1m»</div></div>
+    </div>
+
+    <h2>Sell Grid</h2>
+    <div class="info">
+      Сетка SELL-лимитов выше цены. Ловит откат после пампа.
+    </div>
+    <div class="row">
+      <label>Шаг сетки %</label>
+      <input type="number" id="gridStepPct" value="0.25" min="0.05" step="0.05" />
+    </div>
+    <div class="row">
+      <label>Уровней вверх</label>
+      <input type="number" id="gridLevels" value="4" min="1" max="10" step="1" />
+    </div>
+    <div class="row">
+      <label>Тейк %</label>
+      <input type="number" id="tpPct" value="0.30" min="0.1" step="0.05" />
+    </div>
+    <div class="row">
+      <label>Стоп %</label>
+      <input type="number" id="slPct" value="1.0" min="0.2" max="15" step="0.1" />
+    </div>
+    <div class="row">
+      <label>Размер USDT</label>
+      <input type="number" id="orderUsdt" value="20" min="5" step="1" />
+    </div>
+    <div class="row">
+      <label>Макс. лосс / день</label>
+      <input type="number" id="maxDailyLoss" value="15" min="0" step="1" />
+    </div>
+    <div class="row">
+      <label>Интервал цикла (с)</label>
+      <input type="number" id="intervalSec" value="3" min="2" step="1" />
+    </div>
+    <div class="row">
+      <label>Live (реальные ордера)</label>
+      <input type="checkbox" id="liveEnabled" />
+    </div>
+    <div class="row">
+      <label>Maker TP (лимит)</label>
+      <input type="checkbox" id="makerExit" checked />
+    </div>
+    <div class="row">
+      <label>Защита от спайка</label>
+      <input type="checkbox" id="superSpikeProtect" checked />
+    </div>
+    <div class="row">
+      <label>Порог спайка %</label>
+      <input type="number" id="maxSpikePct" value="0.40" min="0.1" step="0.05" />
+    </div>
+    <div class="row">
+      <label>Фильтр ATR</label>
+      <input type="checkbox" id="volFilter" checked />
+    </div>
+    <div class="row">
+      <label>Мин ATR %</label>
+      <input type="number" id="minAtrPct" value="0.15" min="0.05" step="0.05" />
+    </div>
+    <div class="row">
+      <label>Макс ATR %</label>
+      <input type="number" id="maxAtrPct" value="4" min="0.5" step="0.1" />
+    </div>
+
+    <button class="btn btn-start" id="startBtn">▶ Старт</button>
+    <button class="btn btn-stop" id="stopBtn">■ Стоп</button>
+    <button class="btn btn-once" id="onceBtn">1 цикл</button>
+
+    <div class="stats">
+      <div class="row"><span>Статус</span><span class="val" id="statusText">ВЫКЛ</span></div>
+      <div class="row"><span>Режим</span><span class="val" id="modeStatusText" style="color:var(--muted)">Обычный</span></div>
+      <div class="row"><span>Mid</span><span class="val" id="midText">—</span></div>
+      <div class="row"><span>ATR %</span><span class="val" id="atrText">—</span></div>
+      <div class="row"><span>RSI(14)</span><span class="val" id="rsiText">—</span></div>
+      <div class="row"><span>Спайк</span><span class="val" id="spikeText">OK</span></div>
+      <div class="row"><span>OI тренд</span><span class="val" id="oiTrendText">—</span></div>
+      <div class="row"><span>CVD тренд</span><span class="val" id="cvdTrendText">—</span></div>
+      <div class="row"><span>Фильтр Щукина</span><span class="val" id="shukinFilterText">—</span></div>
+      <div class="row"><span>Циклов</span><span class="val" id="cyclesText">0</span></div>
+      <div class="row"><span>Сделок</span><span class="val" id="tradesText">0</span></div>
+      <div class="row"><span>Win / Loss</span><span class="val" id="wlText">0 / 0</span></div>
+      <div class="row"><span>День PnL</span><span class="val" id="dayPnlText">0</span></div>
+    </div>
+    <div class="log" id="log">Лог пуст</div>
+  </aside>
+
+  <main class="main">
+    <div class="watch-section">
+      <div class="watch-head">
+        <h3>Активные на бирже (позиции + заявки)</h3>
+        <button class="btn btn-sec" id="syncWatchBtn" style="width:auto;margin:0;padding:6px 12px;">↻ Синхр. с биржи</button>
+      </div>
+      <div class="watch-grid" id="watchGrid">
+        <div class="watch-empty" id="watchEmpty">Нет активных. После ордеров/позиций или «Синхр. с биржи» появятся карточки с мини-графиками. При старте бота всё подтягивается автоматически.</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span style="color:var(--muted);font-size:0.85rem;">Позиция (выбранная)</span>
+      <button class="btn btn-sec" id="refreshPosBtn" style="width:auto;margin:0;padding:6px 12px;">Обновить</button>
+      <button class="btn btn-sec" id="closePosBtn" style="width:auto;margin:0;padding:6px 12px;color:var(--red);">Закрыть market</button>
+    </div>
+    <div class="pos-card" id="posCard">
+      <div><div class="k">Side</div><div class="v" id="posSide">FLAT</div></div>
+      <div><div class="k">Size</div><div class="v" id="posSize">—</div></div>
+      <div><div class="k">Entry</div><div class="v" id="posEntry">—</div></div>
+      <div><div class="k">uPnL</div><div class="v" id="posUpnl">—</div></div>
+    </div>
+    <div id="chart"></div>
+    <div class="sub-charts">
+      <div class="sub-chart-wrap">
+        <div class="sub-chart-label">Объём</div>
+        <div class="sub-chart" id="volChart"></div>
+      </div>
+      <div class="sub-chart-wrap">
+        <div class="sub-chart-label">Открытый интерес (OI)</div>
+        <div class="sub-chart" id="oiChart"></div>
+      </div>
+      <div class="sub-chart-wrap">
+        <div class="sub-chart-label">CVD (кумулятивная дельта объёма)</div>
+        <div class="sub-chart" id="cvdChart"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast">
+  <b id="toastTitle"></b>
+  <div id="toastSub" style="font-size:0.8rem;color:var(--muted)"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const $ = id => document.getElementById(id);
+
+  // ---------- state ----------
+  const state = {
+    running: false,
+    busy: false,
+    timer: null,
+    candles: [],
+    chartSymbol: '',
+    cycles: 0,
+    trades: 0,
+    wins: 0,
+    losses: 0,
+    dayPnl: 0,
+    dayKey: '',
+    lastTradeAt: 0,
+    priceHistory: [],
+    lastGridMid: 0,
+    gridLineSeries: [],
+    targets: [],   // [{ symbol, chg, rsi, turnover, scannedAt }]
+    shukinMode: false,
+    oiData: [],
+    cvdData: [],
+    shukinSignal: null,  // { allowShort, reason, oiTrend, cvdTrend }
+    loadId: 0,           // защита от гонки при смене монеты
+    // multi-symbol: { [symbol]: { symbol, mid, candles, priceHistory, pos, orders, isSpike, volOk, status, miniChart, miniSeries } }
+    watches: {}
+  };
+
+  let chart, candleSeries, midSeries;
+  let volChart, volSeries;
+  let oiChart, oiSeries;
+  let cvdChart, cvdSeries;
+
+  // ---------- helpers ----------
+  function bybitBase() {
+    return $('testnet').checked
+      ? 'https://api-testnet.bybit.com'
+      : 'https://api.bybit.com';
+  }
+
+  function getKeys() {
+    return {
+      key: ($('apiKey').value || '').trim(),
+      secret: ($('apiSecret').value || '').trim()
+    };
+  }
+
+  function saveKeys() {
+    localStorage.setItem('sg_apiKey', $('apiKey').value);
+    localStorage.setItem('sg_apiSecret', $('apiSecret').value);
+    localStorage.setItem('sg_testnet', $('testnet').checked ? '1' : '0');
+    localStorage.setItem('sg_symbol', $('symbol').value);
+    toast('Сохранено', 'Ключи и настройки', true);
+  }
+
+  function loadKeys() {
+    $('apiKey').value = localStorage.getItem('sg_apiKey') || '';
+    $('apiSecret').value = localStorage.getItem('sg_apiSecret') || '';
+    $('testnet').checked = localStorage.getItem('sg_testnet') === '1';
+    const sym = localStorage.getItem('sg_symbol');
+    if (sym) $('symbol').value = sym;
+  }
+
+  function log(msg, type) {
+    const el = $('log');
+    const t = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const color = type === 'ok' ? 'var(--green)' : type === 'err' ? 'var(--red)' : 'var(--muted)';
+    el.innerHTML = `<div style="color:${color}">[${t}] ${msg}</div>` + el.innerHTML;
+  }
+
+  function toast(title, sub, ok) {
+    const el = $('toast');
+    $('toastTitle').textContent = title;
+    $('toastSub').textContent = sub || '';
+    el.className = 'toast show ' + (ok ? 'ok' : 'err');
+    setTimeout(() => el.classList.remove('show'), 2800);
+  }
+
+  function setConn(ok, text) {
+    const b = $('connBadge');
+    b.textContent = '● ' + (text || (ok ? 'OK' : 'ERR'));
+    b.className = 'badge ' + (ok === true ? 'on' : ok === false ? 'err' : '');
+  }
+
+  function setRun(on) {
+    const b = $('runBadge');
+    b.textContent = on ? 'RUN' : 'Стоп';
+    b.className = 'badge ' + (on ? 'on' : '');
+  }
+
+  function fmt(n, d = 4) {
+    if (n == null || isNaN(n)) return '—';
+    const a = Math.abs(n);
+    if (a >= 1000) return n.toFixed(2);
+    if (a >= 1) return n.toFixed(4);
+    if (a >= 0.01) return n.toFixed(6);
+    return n.toFixed(8);
+  }
+
+  function roundToStep(v, step) {
+    step = parseFloat(step) || 0.01;
+    const p = Math.round(1 / step);
+    return Math.round(v * p) / p;
+  }
+
+  function ensureDayKey() {
+    const k = new Date().toISOString().slice(0, 10);
+    if (state.dayKey !== k) {
+      state.dayKey = k;
+      state.dayPnl = 0;
+      state.trades = 0;
+      state.wins = 0;
+      state.losses = 0;
+    }
+  }
+
+  function recordTrade(pnl) {
+    ensureDayKey();
+    state.trades++;
+    state.dayPnl += pnl;
+    if (pnl >= 0) state.wins++; else state.losses++;
+    $('tradesText').textContent = String(state.trades);
+    $('wlText').textContent = state.wins + ' / ' + state.losses;
+    $('dayPnlText').textContent = (state.dayPnl >= 0 ? '+' : '') + state.dayPnl.toFixed(2);
+    log(`Сделка PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(3)}`, pnl >= 0 ? 'ok' : 'err');
+  }
+
+  // ---------- crypto ----------
+  async function hmacSha256(secret, msg) {
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(msg));
+    return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function signedRequest(method, path, params) {
+    const { key, secret } = getKeys();
+    if (!key || !secret) throw new Error('Нет API Key/Secret');
+    const ts = Date.now().toString();
+    const recv = '10000';
+    let query = '', body = '';
+    if (method === 'GET') {
+      query = Object.keys(params || {}).sort().map(k => k + '=' + params[k]).join('&');
+    } else {
+      body = JSON.stringify(params || {});
+    }
+    const prehash = ts + key + recv + (method === 'GET' ? query : body);
+    const sign = await hmacSha256(secret, prehash);
+    const url = bybitBase() + path + (query ? '?' + query : '');
+    const res = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-BAPI-API-KEY': key,
+        'X-BAPI-SIGN': sign,
+        'X-BAPI-TIMESTAMP': ts,
+        'X-BAPI-RECV-WINDOW': recv
+      },
+      body: method === 'GET' ? undefined : body
+    });
+    return res.json();
+  }
+
+  async function publicGet(path, params) {
+    const q = Object.keys(params || {}).map(k => k + '=' + encodeURIComponent(params[k])).join('&');
+    const res = await fetch(bybitBase() + path + (q ? '?' + q : ''));
+    return res.json();
+  }
+
+  // ---------- market data ----------
+  async function getInstrument(symbol, category) {
+    const j = await publicGet('/v5/market/instruments-info', { category, symbol });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    const info = j.result?.list?.[0];
+    if (!info) throw new Error('Инструмент не найден');
+    return {
+      tickSize: info.priceFilter?.tickSize || '0.01',
+      qtyStep: info.lotSizeFilter?.qtyStep || '0.001',
+      minQty: info.lotSizeFilter?.minOrderQty || '0.001'
+    };
+  }
+
+  async function getOrderBook(symbol, category) {
+    const j = await publicGet('/v5/market/orderbook', { category, symbol, limit: 5 });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    return {
+      bids: (j.result?.b || []).map(([p]) => parseFloat(p)),
+      asks: (j.result?.a || []).map(([p]) => parseFloat(p))
+    };
+  }
+
+  async function getKlines(symbol, category, interval, limit) {
+    const j = await publicGet('/v5/market/kline', {
+      category, symbol, interval, limit: limit || 200
+    });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    return (j.result?.list || []).map(r => ({
+      time: Math.floor(parseInt(r[0], 10) / 1000),
+      open: parseFloat(r[1]),
+      high: parseFloat(r[2]),
+      low: parseFloat(r[3]),
+      close: parseFloat(r[4]),
+      volume: parseFloat(r[5] || 0)
+    })).reverse();
+  }
+
+  function mapOiInterval(tf) {
+    const m = { '1': '5min', '3': '5min', '5': '5min', '15': '15min', '30': '30min', '60': '1h', '240': '4h', 'D': '1d' };
+    return m[String(tf)] || '5min';
+  }
+
+  async function getOpenInterest(symbol, category, interval, limit) {
+    const intervalTime = mapOiInterval(interval);
+    const j = await publicGet('/v5/market/open-interest', {
+      category, symbol, intervalTime, limit: limit || 200
+    });
+    if (j.retCode !== 0) throw new Error(j.retMsg || 'OI error');
+    // list is newest first
+    return (j.result?.list || []).map(r => ({
+      time: Math.floor(parseInt(r.timestamp, 10) / 1000),
+      value: parseFloat(r.openInterest || 0)
+    })).reverse();
+  }
+
+  async function getPosition(symbol, category) {
+    const j = await signedRequest('GET', '/v5/position/list', { category, symbol });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    const row = (j.result?.list || []).find(p => parseFloat(p.size) > 0);
+    if (!row) return { side: null, size: 0, avgPrice: 0, unrealisedPnl: 0 };
+    return {
+      side: row.side,
+      size: parseFloat(row.size),
+      avgPrice: parseFloat(row.avgPrice),
+      unrealisedPnl: parseFloat(row.unrealisedPnl || 0)
+    };
+  }
+
+  async function getOpenOrders(symbol, category) {
+    const j = await signedRequest('GET', '/v5/order/realtime', { category, symbol, limit: 50 });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    return j.result?.list || [];
+  }
+
+  /** Все позиции linear USDT */
+  async function getAllPositions(category) {
+    const j = await signedRequest('GET', '/v5/position/list', {
+      category, settleCoin: 'USDT', limit: 200
+    });
+    if (j.retCode !== 0) throw new Error(j.retMsg || 'positions fail');
+    return (j.result?.list || []).filter(p => Math.abs(parseFloat(p.size || 0)) > 0);
+  }
+
+  /** Все открытые ордера linear USDT */
+  async function getAllOpenOrders(category) {
+    const j = await signedRequest('GET', '/v5/order/realtime', {
+      category, settleCoin: 'USDT', limit: 50
+    });
+    if (j.retCode !== 0) throw new Error(j.retMsg || 'orders fail');
+    return j.result?.list || [];
+  }
+
+  // ---------- orders ----------
+  async function cancelOurOrders(symbol, category) {
+    try {
+      const open = await getOpenOrders(symbol, category);
+      const ours = open.filter(o => (o.orderLinkId || '').startsWith('sg_'));
+      for (const o of ours) {
+        try {
+          await signedRequest('POST', '/v5/order/cancel', {
+            category, symbol, orderId: o.orderId
+          });
+        } catch (e) {}
+      }
+      if (ours.length) log('Снято ордеров: ' + ours.length, 'info');
+      return ours.length;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  async function closeMarket(symbol, category) {
+    const pos = await getPosition(symbol, category);
+    if (!pos.size) return;
+    const side = pos.side === 'Buy' ? 'Sell' : 'Buy';
+    const j = await signedRequest('POST', '/v5/order/create', {
+      category, symbol, side,
+      orderType: 'Market',
+      qty: String(pos.size),
+      reduceOnly: true,
+      positionIdx: 0,
+      orderLinkId: 'sg_close_' + Date.now()
+    });
+    if (j.retCode !== 0) throw new Error(j.retMsg);
+    log('Закрыта market', 'ok');
+  }
+
+  async function placeMakerExit(symbol, category, pos, tpPrice, inst) {
+    if (!pos.size) return;
+    const side = pos.side === 'Buy' ? 'Sell' : 'Buy';
+    const price = roundToStep(tpPrice, inst.tickSize);
+    const body = {
+      category, symbol, side,
+      orderType: 'Limit',
+      qty: String(pos.size),
+      price: String(price),
+      timeInForce: 'PostOnly',
+      reduceOnly: true,
+      positionIdx: 0,
+      orderLinkId: 'sg_tp_' + Date.now()
+    };
+    let j = await signedRequest('POST', '/v5/order/create', body);
+    if (j.retCode !== 0) {
+      body.timeInForce = 'GTC';
+      body.orderLinkId = 'sg_tp_' + Date.now() + '_g';
+      j = await signedRequest('POST', '/v5/order/create', body);
+    }
+    if (j.retCode === 0) log(`Maker TP @ ${price}`, 'ok');
+    else log('Maker TP fail: ' + j.retMsg, 'err');
+  }
+
+  async function placeSellLimit(symbol, category, qty, price, tp, sl, inst) {
+    const limitPrice = roundToStep(price, inst.tickSize);
+    const body = {
+      category, symbol,
+      side: 'Sell',
+      orderType: 'Limit',
+      qty: String(qty),
+      price: String(limitPrice),
+      timeInForce: 'GTC',
+      positionIdx: 0,
+      orderLinkId: 'sg_s_' + Date.now() + '_' + Math.floor(Math.random() * 999)
+    };
+    if (sl) { body.stopLoss = String(sl); body.slTriggerBy = 'LastPrice'; }
+    if (tp && !$('makerExit').checked) {
+      body.takeProfit = String(tp);
+      body.tpTriggerBy = 'LastPrice';
+    }
+    log(`→ Sell limit ${qty} @ ${limitPrice}`, 'info');
+    const j = await signedRequest('POST', '/v5/order/create', body);
+    if (j.retCode === 0) log(`✅ Sell #${j.result?.orderId}`, 'ok');
+    else log(`❌ Sell: ${j.retMsg}`, 'err');
+    return j;
+  }
+
+  // ---------- indicators ----------
+  function estimateAtrPct(candles, period) {
+    if (!candles || candles.length < period + 1) return null;
+    let sum = 0;
+    for (let i = candles.length - period; i < candles.length; i++) {
+      const c = candles[i];
+      const prev = candles[i - 1];
+      const tr = Math.max(
+        c.high - c.low,
+        Math.abs(c.high - prev.close),
+        Math.abs(c.low - prev.close)
+      );
+      sum += tr;
+    }
+    const atr = sum / period;
+    const last = candles[candles.length - 1].close;
+    return last ? atr / last : null;
+  }
+
+  function calculateRSI(candles, period) {
+    if (!candles || candles.length < period + 1) return null;
+    let gains = 0, losses = 0;
+    for (let i = candles.length - period; i < candles.length; i++) {
+      const diff = candles[i].close - candles[i - 1].close;
+      if (diff >= 0) gains += diff; else losses -= diff;
+    }
+    const avgGain = gains / period;
+    const avgLoss = losses / period;
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+  }
+
+  // ---------- chart ----------
+  function makeSubChartOpts(el) {
+    return {
+      layout: { background: { color: '#12161c' }, textColor: '#848e9c' },
+      grid: { vertLines: { color: '#1e2329' }, horzLines: { color: '#1e2329' } },
+      rightPriceScale: { borderColor: '#1e2329', scaleMargins: { top: 0.1, bottom: 0.05 } },
+      timeScale: { borderColor: '#1e2329', timeVisible: true, visible: true },
+      width: el.clientWidth,
+      height: el.clientHeight || 110
+    };
+  }
+
+  function initChart() {
+    const el = $('chart');
+    chart = LightweightCharts.createChart(el, {
+      layout: { background: { color: '#12161c' }, textColor: '#eaecef' },
+      grid: { vertLines: { color: '#1e2329' }, horzLines: { color: '#1e2329' } },
+      rightPriceScale: { borderColor: '#1e2329' },
+      timeScale: { borderColor: '#1e2329', timeVisible: true },
+      width: el.clientWidth,
+      height: el.clientHeight || 320
+    });
+    candleSeries = chart.addCandlestickSeries({
+      upColor: '#0ecb81', downColor: '#f6465d',
+      borderUpColor: '#0ecb81', borderDownColor: '#f6465d',
+      wickUpColor: '#0ecb81', wickDownColor: '#f6465d'
+    });
+    midSeries = chart.addLineSeries({ color: '#f0b90b', lineWidth: 1, title: 'Mid' });
+
+    const volEl = $('volChart');
+    volChart = LightweightCharts.createChart(volEl, makeSubChartOpts(volEl));
+    volSeries = volChart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: ''
+    });
+    volChart.priceScale('').applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
+
+    const oiEl = $('oiChart');
+    oiChart = LightweightCharts.createChart(oiEl, makeSubChartOpts(oiEl));
+    oiSeries = oiChart.addLineSeries({
+      color: '#a855f7', lineWidth: 2, title: 'OI'
+    });
+
+    const cvdEl = $('cvdChart');
+    cvdChart = LightweightCharts.createChart(cvdEl, makeSubChartOpts(cvdEl));
+    cvdSeries = cvdChart.addLineSeries({
+      color: '#06b6d4', lineWidth: 2, title: 'CVD'
+    });
+
+    // sync time scales
+    const charts = [chart, volChart, oiChart, cvdChart];
+    charts.forEach(c => {
+      c.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (!range) return;
+        charts.forEach(other => {
+          if (other !== c) {
+            try { other.timeScale().setVisibleLogicalRange(range); } catch (e) {}
+          }
+        });
+      });
+    });
+
+    window.addEventListener('resize', () => {
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      [volChart, oiChart, cvdChart].forEach((c, i) => {
+        const ids = ['volChart', 'oiChart', 'cvdChart'];
+        const node = $(ids[i]);
+        if (node) c.applyOptions({ width: node.clientWidth, height: node.clientHeight || 110 });
+      });
+    });
+  }
+
+  function clearGridLines() {
+    state.gridLineSeries.forEach(s => {
+      try { chart.removeSeries(s); } catch (e) {}
+    });
+    state.gridLineSeries = [];
+  }
+
+  function drawLevels(mid, targets, pos) {
+    if (!state.candles.length || !chart) return;
+    const t0 = state.candles[0].time;
+    const t1 = state.candles[state.candles.length - 1].time + 120;
+    clearGridLines();
+
+    midSeries.setData([
+      { time: t0, value: mid },
+      { time: t1, value: mid }
+    ]);
+
+    targets.forEach(px => {
+      const s = chart.addLineSeries({
+        color: '#f6465d', lineWidth: 1, lineStyle: 2, title: 'Sell ' + px
+      });
+      s.setData([{ time: t0, value: px }, { time: t1, value: px }]);
+      state.gridLineSeries.push(s);
+    });
+  }
+
+  function buildCvd(candles) {
+    let cum = 0;
+    return candles.map(c => {
+      const delta = c.close >= c.open ? (c.volume || 0) : -(c.volume || 0);
+      cum += delta;
+      return { time: c.time, value: cum };
+    });
+  }
+
+  /** Анализ по Щукину: OI + CVD → можно ли шортить */
+  function analyzeShukinContext(candles, oiData) {
+    const result = {
+      allowShort: true,
+      reason: 'OK',
+      oiTrend: '—',
+      cvdTrend: '—',
+      oiChangePct: 0,
+      cvdSlope: 0
+    };
+    if (!candles || candles.length < 10) {
+      result.allowShort = false;
+      result.reason = 'мало данных';
+      return result;
+    }
+
+    const cvd = buildCvd(candles);
+    state.cvdData = cvd;
+
+    // --- OI: последние ~8 точек vs предыдущие ---
+    let oiTrend = 'n/a';
+    let oiChangePct = 0;
+    if (oiData && oiData.length >= 6) {
+      const n = oiData.length;
+      const recent = oiData.slice(-4);
+      const prev = oiData.slice(-8, -4);
+      const avg = arr => arr.reduce((s, x) => s + x.value, 0) / (arr.length || 1);
+      const aR = avg(recent);
+      const aP = avg(prev);
+      oiChangePct = aP > 0 ? ((aR - aP) / aP) * 100 : 0;
+      if (oiChangePct > 1.5) oiTrend = 'растёт';
+      else if (oiChangePct < -1.0) oiTrend = 'падает';
+      else oiTrend = 'флэт';
+    }
+    result.oiTrend = oiTrend;
+    result.oiChangePct = oiChangePct;
+
+    // --- CVD: наклон последних свечей ---
+    const tail = cvd.slice(-8);
+    let cvdSlope = 0;
+    if (tail.length >= 4) {
+      const mid = Math.floor(tail.length / 2);
+      const first = tail.slice(0, mid);
+      const second = tail.slice(mid);
+      const avgV = arr => arr.reduce((s, x) => s + x.value, 0) / (arr.length || 1);
+      const a1 = avgV(first);
+      const a2 = avgV(second);
+      const scale = Math.abs(a2) > 1e-9 ? Math.abs(a2) : 1;
+      cvdSlope = (a2 - a1) / scale; // >0 покупатели сильнее
+    }
+    result.cvdSlope = cvdSlope;
+    if (cvdSlope > 0.03) result.cvdTrend = 'покупки';
+    else if (cvdSlope < -0.03) result.cvdTrend = 'продажи';
+    else result.cvdTrend = 'нейтр.';
+
+    // --- RSI / памп-контекст ---
+    const rsi = calculateRSI(candles, 14);
+    const last = candles[candles.length - 1];
+    const ago = candles[Math.max(0, candles.length - 12)];
+    const pumpPct = ago && ago.close ? ((last.close - ago.close) / ago.close) * 100 : 0;
+
+    // Правила Щукина для ШОРТА:
+    // 1) Не шортить, пока OI сильно растёт (размотает ранних шортов)
+    // 2) Не шортить, пока CVD сильно в покупках на хаях
+    // 3) Разрешать: OI флэт/падает ИЛИ CVD слабеет/продажи; лучше после пампа
+    if (oiTrend === 'растёт' && oiChangePct > 2.5) {
+      result.allowShort = false;
+      result.reason = 'OI растёт — рано шортить';
+    } else if (cvdSlope > 0.08 && oiTrend === 'растёт') {
+      result.allowShort = false;
+      result.reason = 'OI↑ + CVD покупки — сила лонга';
+    } else if (cvdSlope > 0.12) {
+      result.allowShort = false;
+      result.reason = 'CVD сильные покупки';
+    } else if (oiTrend === 'падает' || cvdSlope < -0.02) {
+      result.allowShort = true;
+      result.reason = oiTrend === 'падает' ? 'OI падает — деньги уходят' : 'CVD продажи';
+    } else if (pumpPct > 3 && (oiTrend === 'флэт' || oiTrend === 'n/a') && cvdSlope <= 0.05) {
+      result.allowShort = true;
+      result.reason = 'памп выдыхается';
+    } else if (rsi != null && rsi >= 70 && cvdSlope <= 0.04) {
+      result.allowShort = true;
+      result.reason = 'RSI перекуп + CVD не тянет';
+    } else {
+      result.allowShort = true;
+      result.reason = 'нейтральный контекст';
+    }
+
+    return result;
+  }
+
+  function updateShukinUI(sig) {
+    state.shukinSignal = sig;
+    const oiEl = $('oiTrendText');
+    const cvdEl = $('cvdTrendText');
+    const fEl = $('shukinFilterText');
+    if (oiEl) {
+      oiEl.textContent = sig.oiTrend + (sig.oiChangePct ? ' (' + sig.oiChangePct.toFixed(1) + '%)' : '');
+      oiEl.style.color = sig.oiTrend === 'растёт' ? 'var(--green)' : sig.oiTrend === 'падает' ? 'var(--red)' : 'var(--muted)';
+    }
+    if (cvdEl) {
+      cvdEl.textContent = sig.cvdTrend;
+      cvdEl.style.color = sig.cvdTrend === 'покупки' ? 'var(--green)' : sig.cvdTrend === 'продажи' ? 'var(--red)' : 'var(--muted)';
+    }
+    if (fEl) {
+      if (!state.shukinMode) {
+        fEl.textContent = 'выкл';
+        fEl.style.color = 'var(--muted)';
+      } else if (sig.allowShort) {
+        fEl.textContent = 'ШОРТ ОК ' + sig.reason;
+        fEl.style.color = 'var(--green)';
+      } else {
+        fEl.textContent = 'ЖДАТЬ: ' + sig.reason;
+        fEl.style.color = 'var(--yellow)';
+      }
+    }
+  }
+
+  function sanitizeCandles(raw) {
+    if (!raw || !raw.length) return [];
+    const byTime = new Map();
+    for (const c of raw) {
+      const t = Number(c.time);
+      if (!t || !isFinite(t)) continue;
+      byTime.set(t, {
+        time: t,
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+        volume: Number(c.volume) || 0
+      });
+    }
+    return [...byTime.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, v]) => v)
+      .filter(c =>
+        isFinite(c.open) && isFinite(c.high) && isFinite(c.low) && isFinite(c.close)
+      );
+  }
+
+  function sanitizeSeries(points) {
+    if (!points || !points.length) return [];
+    const byTime = new Map();
+    for (const p of points) {
+      const t = Number(p.time);
+      if (!t || !isFinite(t) || !isFinite(p.value)) continue;
+      byTime.set(t, { time: t, value: Number(p.value), color: p.color });
+    }
+    return [...byTime.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, v]) => (v.color != null ? v : { time: v.time, value: v.value }));
+  }
+
+  function resetAllSeries() {
+    try { clearGridLines(); } catch (e) {}
+    try { if (candleSeries) candleSeries.setData([]); } catch (e) {}
+    try { if (midSeries) midSeries.setData([]); } catch (e) {}
+    try { if (volSeries) volSeries.setData([]); } catch (e) {}
+    try { if (oiSeries) oiSeries.setData([]); } catch (e) {}
+    try { if (cvdSeries) cvdSeries.setData([]); } catch (e) {}
+  }
+
+  function fitAllCharts() {
+    try { chart.timeScale().fitContent(); } catch (e) {}
+    try { volChart && volChart.timeScale().fitContent(); } catch (e) {}
+    try { oiChart && oiChart.timeScale().fitContent(); } catch (e) {}
+    try { cvdChart && cvdChart.timeScale().fitContent(); } catch (e) {}
+  }
+
+  function resizeAllCharts() {
+    const el = $('chart');
+    if (chart && el) {
+      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight || 320 });
+    }
+    [['volChart', volChart], ['oiChart', oiChart], ['cvdChart', cvdChart]].forEach(([id, c]) => {
+      const node = $(id);
+      if (c && node) c.applyOptions({ width: node.clientWidth, height: node.clientHeight || 110 });
+    });
+  }
+
+  async function loadChart() {
+    const symbol = ($('symbol').value || '').toUpperCase().trim();
+    if (!symbol) return;
+    const category = $('category').value;
+    const interval = $('interval').value;
+    const myId = ++state.loadId;
+
+    try {
+      setConn(null, 'загрузка ' + symbol + '…');
+      // сразу сбрасываем старые данные, чтобы не мешали новой монете
+      resetAllSeries();
+      state.candles = [];
+      state.oiData = [];
+      state.cvdData = [];
+      state.chartSymbol = symbol;
+      state.lastGridMid = 0;
+      state.priceHistory = [];
+
+      const raw = await getKlines(symbol, category, interval, 200);
+      // если уже кликнули другую монету — игнор
+      if (myId !== state.loadId) return;
+
+      const data = sanitizeCandles(raw);
+      if (!data.length) throw new Error('Нет свечей по ' + symbol);
+
+      state.candles = data;
+
+      // цена: авто-масштаб под новую монету
+      try {
+        candleSeries.applyOptions({
+          autoscaleInfoProvider: undefined
+        });
+        candleSeries.setData(data);
+        chart.priceScale('right').applyOptions({ autoScale: true });
+      } catch (e) {
+        candleSeries.setData(data);
+      }
+
+      // Volume
+      if (volSeries) {
+        const volData = sanitizeSeries(data.map(c => ({
+          time: c.time,
+          value: c.volume || 0,
+          color: c.close >= c.open ? 'rgba(14,203,129,0.55)' : 'rgba(246,70,93,0.55)'
+        })));
+        volSeries.setData(volData);
+      }
+
+      // CVD
+      const cvd = buildCvd(data);
+      state.cvdData = cvd;
+      if (cvdSeries) {
+        cvdSeries.setData(sanitizeSeries(cvd));
+      }
+
+      // OI
+      state.oiData = [];
+      if (oiSeries) {
+        try {
+          const oiRaw = await getOpenInterest(symbol, category, interval, 200);
+          if (myId !== state.loadId) return;
+          const oi = sanitizeSeries(oiRaw || []);
+          state.oiData = oi;
+          oiSeries.setData(oi);
+        } catch (oiErr) {
+          if (myId === state.loadId) {
+            oiSeries.setData([]);
+            log('OI: ' + oiErr.message, 'info');
+          }
+        }
+      }
+
+      if (myId !== state.loadId) return;
+
+      resizeAllCharts();
+      fitAllCharts();
+
+      const sig = analyzeShukinContext(data, state.oiData);
+      updateShukinUI(sig);
+
+      setConn(true, 'OK');
+      const rsi = calculateRSI(data, 14);
+      $('rsiText').textContent = rsi != null ? rsi.toFixed(1) : '—';
+      $('midText').textContent = data.length ? fmt(data[data.length - 1].close) : '—';
+      log('График ' + symbol + ' · ' + data.length + ' свечей + Vol/OI/CVD', 'ok');
+      if (state.shukinMode) {
+        log('Щукин-фильтр: ' + (sig.allowShort ? 'ШОРТ ОК' : 'ЖДАТЬ') + ' — ' + sig.reason, sig.allowShort ? 'ok' : 'info');
+      }
+    } catch (e) {
+      if (myId !== state.loadId) return;
+      setConn(false, 'ошибка');
+      log('Ошибка графика (' + symbol + '): ' + e.message, 'err');
+    }
+  }
+
+  function updatePosUI(pos) {
+    $('posSide').textContent = pos.size ? pos.side : 'FLAT';
+    $('posSize').textContent = pos.size ? fmt(pos.size) : '—';
+    $('posEntry').textContent = pos.size ? fmt(pos.avgPrice) : '—';
+    const up = pos.unrealisedPnl || 0;
+    const el = $('posUpnl');
+    el.textContent = pos.size ? (up >= 0 ? '+' : '') + up.toFixed(3) : '—';
+    el.className = 'v ' + (up > 0 ? 'pos' : up < 0 ? 'neg' : '');
+  }
+
+  // ---------- TARGETS LIST (persist) ----------
+  function saveTargets() {
+    try {
+      localStorage.setItem('sg_targets', JSON.stringify(state.targets));
+    } catch (e) {}
+  }
+
+  function loadTargets() {
+    try {
+      const raw = localStorage.getItem('sg_targets');
+      if (!raw) return;
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) state.targets = arr;
+    } catch (e) {
+      state.targets = [];
+    }
+  }
+
+  function renderTargets() {
+    const box = $('targetsList');
+    if (!state.targets.length) {
+      box.innerHTML = '<div class="targets-empty">Нажми «Найти пампы» или «ультра-волатильные 1m»</div>';
+      return;
+    }
+    const current = ($('symbol').value || '').toUpperCase().trim();
+    box.innerHTML = state.targets.map((t, i) => {
+      const chg = parseFloat(t.chg) || 0;
+      const chgCls = chg >= 0 ? 'up' : 'dn';
+      const chgTxt = (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%';
+      const rsiTxt = t.rsi != null ? 'RSI ' + Number(t.rsi).toFixed(0) : '—';
+      const volTxt = t.range1m != null
+        ? '1m ±' + Number(t.range1m).toFixed(2) + '%'
+        : rsiTxt;
+      const active = t.symbol === current ? ' active' : '';
+      const shortSym = t.symbol.replace(/USDT$/, '');
+      return `<div class="target-item${active}" data-idx="${i}" data-sym="${t.symbol}">
+        <span class="sym">${shortSym}</span>
+        <div class="meta">
+          <span class="chg ${chgCls}">${chgTxt}</span>
+          <span class="rsi">${volTxt}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('.target-item').forEach(el => {
+      el.onclick = async () => {
+        const sym = (el.getAttribute('data-sym') || '').toUpperCase().trim();
+        if (!sym) return;
+        if (sym === state.chartSymbol && state.candles.length) {
+          // уже эта монета — просто подсветить
+          $('symbol').value = sym;
+          renderTargets();
+          return;
+        }
+        $('symbol').value = sym;
+        const t = state.targets.find(x => x.symbol === sym);
+        if (t && t.tf) $('interval').value = String(t.tf);
+        renderTargets();
+        log('Выбрана цель: ' + sym + ' — грузим график…', 'info');
+        try {
+          await loadChart();
+        } catch (e) {
+          log('Не удалось загрузить ' + sym + ': ' + (e.message || e), 'err');
+        }
+      };
+    });
+  }
+
+  function clearTargets() {
+    state.targets = [];
+    saveTargets();
+    renderTargets();
+    log('Список целей очищен', 'info');
+  }
+
+  // ---------- SCAN: список пампов под short ----------
+  async function scanPump() {
+    const btn = $('scanBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Поиск…';
+    try {
+      const category = $('category').value;
+      const interval = $('interval').value;
+      const res = await publicGet('/v5/market/tickers', { category });
+      if (res.retCode !== 0 || !res.result?.list) throw new Error('Тикеры недоступны');
+
+      let pumps = res.result.list.filter(t =>
+        t.symbol.endsWith('USDT') &&
+        parseFloat(t.turnover24h || 0) > 2000000 &&
+        parseFloat(t.price24hPcnt) >= 0.012
+      );
+      if (!pumps.length) {
+        pumps = res.result.list
+          .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h || 0) > 1000000)
+          .sort((a, b) => parseFloat(b.price24hPcnt) - parseFloat(a.price24hPcnt))
+          .slice(0, 20);
+      } else {
+        pumps.sort((a, b) => parseFloat(b.price24hPcnt) - parseFloat(a.price24hPcnt));
+      }
+
+      const candidates = pumps.slice(0, 12);
+      const found = [];
+
+      for (const coin of candidates) {
+        try {
+          const klines = await getKlines(coin.symbol, category, interval, 30);
+          const rsi = calculateRSI(klines, 14);
+          const chg = parseFloat(coin.price24hPcnt || 0) * 100;
+          // берём если RSI высокий или просто сильный памп
+          if (rsi == null || rsi >= 58 || chg >= 3) {
+            found.push({
+              symbol: coin.symbol,
+              chg: chg,
+              rsi: rsi != null ? rsi : null,
+              turnover: parseFloat(coin.turnover24h || 0),
+              scannedAt: Date.now()
+            });
+          }
+        } catch (e) {}
+      }
+
+      // сортируем: сначала высокий RSI, потом % роста
+      found.sort((a, b) => {
+        const ra = a.rsi != null ? a.rsi : 50;
+        const rb = b.rsi != null ? b.rsi : 50;
+        if (rb !== ra) return rb - ra;
+        return b.chg - a.chg;
+      });
+
+      state.targets = found.slice(0, 10);
+      saveTargets();
+      renderTargets();
+
+      if (!state.targets.length) {
+        log('Сканер: подходящих пампов не найдено', 'err');
+        toast('Сканер', 'Ничего не найдено', false);
+      } else {
+        // авто-выбор первой цели
+        const first = state.targets[0];
+        $('symbol').value = first.symbol;
+        renderTargets();
+        await loadChart();
+        log(`🔥 Найдено ${state.targets.length} целей. Топ: ${first.symbol} (RSI ${first.rsi != null ? first.rsi.toFixed(0) : '—'}, ${first.chg.toFixed(1)}%)`, 'ok');
+        toast('Сканер', state.targets.length + ' целей сохранено', true);
+      }
+    } catch (e) {
+      log('Сканер: ' + e.message, 'err');
+      toast('Ошибка', e.message, false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔍 Найти пампы под Short';
+    }
+  }
+
+  function candleRangePct(klines, n) {
+    if (!klines || !klines.length) return 0;
+    const tail = klines.slice(-Math.max(1, n));
+    let hi = -Infinity, lo = Infinity;
+    for (const c of tail) {
+      if (c.high > hi) hi = c.high;
+      if (c.low < lo) lo = c.low;
+    }
+    const last = tail[tail.length - 1].close || 0;
+    return last ? ((hi - lo) / last) * 100 : 0;
+  }
+
+  function lastMovePct(klines, n) {
+    if (!klines || klines.length < 2) return 0;
+    const last = klines[klines.length - 1];
+    const prev = klines[Math.max(0, klines.length - 1 - n)];
+    if (!prev || !prev.close) return 0;
+    return ((last.close - prev.close) / prev.close) * 100;
+  }
+
+  function volSpike(klines, lookback) {
+    if (!klines || klines.length < lookback + 2) return 1;
+    const last = klines[klines.length - 1].volume || 0;
+    const prev = klines.slice(-lookback - 1, -1);
+    const avg = prev.reduce((s, c) => s + (c.volume || 0), 0) / (prev.length || 1);
+    return avg > 0 ? last / avg : 1;
+  }
+
+  async function mapPool(items, limit, fn) {
+    const out = new Array(items.length);
+    let i = 0;
+    async function worker() {
+      while (i < items.length) {
+        const idx = i++;
+        try { out[idx] = await fn(items[idx], idx); }
+        catch (e) { out[idx] = null; }
+      }
+    }
+    const n = Math.min(limit, items.length);
+    await Promise.all(Array.from({ length: n }, worker));
+    return out;
+  }
+
+  // ---------- SCAN: ультра-волатильные прямо сейчас на 1m ----------
+  async function scanUltraVol1m() {
+    const btn = $('ultraVolBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 1m скан…';
+    try {
+      const category = $('category').value;
+      $('interval').value = '1';
+      const res = await publicGet('/v5/market/tickers', { category });
+      if (res.retCode !== 0 || !res.result?.list) throw new Error('Тикеры недоступны');
+
+      const pool = res.result.list
+        .filter(t =>
+          t.symbol.endsWith('USDT') &&
+          parseFloat(t.turnover24h || 0) > 1500000
+        )
+        .sort((a, b) =>
+          Math.abs(parseFloat(b.price24hPcnt || 0)) - Math.abs(parseFloat(a.price24hPcnt || 0))
+        )
+        .slice(0, 48);
+
+      log('Ультра 1m: проверяю ' + pool.length + ' пар…', 'info');
+
+      const scored = await mapPool(pool, 8, async (coin) => {
+        const klines = await getKlines(coin.symbol, category, '1', 40);
+        if (!klines || klines.length < 16) return null;
+        const range15 = candleRangePct(klines, 15);
+        const range5 = candleRangePct(klines, 5);
+        const range1 = candleRangePct(klines, 1);
+        const move5 = lastMovePct(klines, 5);
+        const move1 = lastMovePct(klines, 1);
+        const atr = estimateAtrPct(klines, 14);
+        const atrPct = atr != null ? atr * 100 : 0;
+        const spike = volSpike(klines, 12);
+        const rsi = calculateRSI(klines, 14);
+        const chg24 = parseFloat(coin.price24hPcnt || 0) * 100;
+        const score =
+          range15 * 1.4 +
+          range5 * 1.8 +
+          range1 * 2.2 +
+          Math.abs(move5) * 1.2 +
+          Math.abs(move1) * 1.5 +
+          atrPct * 1.6 +
+          Math.min(spike, 6) * 0.35;
+        const hot =
+          range15 >= 0.70 ||
+          range5 >= 0.45 ||
+          range1 >= 0.28 ||
+          Math.abs(move5) >= 0.40 ||
+          atrPct >= 0.22;
+        if (!hot) return null;
+        return {
+          symbol: coin.symbol,
+          chg: move5,
+          chg24,
+          rsi: rsi != null ? rsi : null,
+          turnover: parseFloat(coin.turnover24h || 0),
+          scannedAt: Date.now(),
+          range1m: range15,
+          range5,
+          range1,
+          atrPct,
+          volSpike: spike,
+          score,
+          tf: '1'
+        };
+      });
+
+      const found = scored.filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 12);
+      state.targets = found;
+      saveTargets();
+      renderTargets();
+
+      if (!found.length) {
+        log('Ультра 1m: сейчас нет сильных движений среди ликвидных пар', 'err');
+        toast('1m вола', 'Ничего горячего', false);
+      } else {
+        const first = found[0];
+        $('symbol').value = first.symbol;
+        $('interval').value = '1';
+        renderTargets();
+        await loadChart();
+        log(
+          `⚡ Ультра 1m: ${found.length} пар. Топ ${first.symbol} · 15m-диап ${first.range1m.toFixed(2)}% · 5m ${first.chg >= 0 ? '+' : ''}${first.chg.toFixed(2)}% · ATR ${first.atrPct.toFixed(2)}%`,
+          'ok'
+        );
+        toast('Ультра 1m', found.length + ' горячих пар', true);
+      }
+    } catch (e) {
+      log('Ультра 1m: ' + e.message, 'err');
+      toast('Ошибка', e.message, false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⚡ Найти ультра-волатильные (1m сейчас)';
+    }
+  }
+
+  // ---------- РЕЖИМ ЩУКИНА ----------
+  // Логика как у Дмитрия Щукина (шорт от пампа):
+  // — вход частями (сетка sell вверх = усреднение)
+  // — короткие тейки 2–4%, не ждём «в пол»
+  // — при открытой шорт-позиции продолжаем добирать выше
+  // — жёсткий риск, маленькие объёмы на уровень
+  function toggleShukin() {
+    state.shukinMode = !state.shukinMode;
+    const btn = $('shukinBtn');
+    const modeEl = $('modeStatusText');
+    if (state.shukinMode) {
+      btn.classList.add('active');
+      btn.textContent = '⚡ Режим Щукина ВКЛ';
+      if (modeEl) {
+        modeEl.textContent = 'Щукин';
+        modeEl.style.color = '#c4b5fd';
+      }
+      // параметры как в его скальп-шортах от пампа
+      $('gridStepPct').value = '1.00';
+      $('gridLevels').value = '5';
+      $('tpPct').value = '0.70';
+      $('slPct').value = '10';
+      $('orderUsdt').value = '12';
+      $('intervalSec').value = '3';
+      $('maxSpikePct').value = '0.50';
+      $('minAtrPct').value = '0.20';
+      $('maxAtrPct').value = '5';
+      $('makerExit').checked = true;
+      $('superSpikeProtect').checked = true;
+      $('volFilter').checked = true;
+      if ($('interval').value === '15') $('interval').value = '5';
+      const info = document.querySelector('.info');
+      if (info) {
+        info.innerHTML = '<b style="color:#c4b5fd">Режим Щукина:</b> шорт от пампа, шаг сетки от 1%, тейк от 0.7%, аварийный стоп 10%. Добор частями выше цены.';
+      }
+      log('⚡ Режим Щукина ВКЛ: шаг сетки 1%, тейк 0.7%, аварийный SL 10% + фильтр OI/CVD', 'ok');
+      toast('Режим Щукина', 'Сетка 1% · TP 0.7% · SL 10%', true);
+      if (state.candles.length) {
+        const sig = analyzeShukinContext(state.candles, state.oiData);
+        updateShukinUI(sig);
+      }
+    } else {
+      btn.classList.remove('active');
+      btn.textContent = '⚡ Режим Щукина';
+      if (modeEl) {
+        modeEl.textContent = 'Обычный';
+        modeEl.style.color = 'var(--muted)';
+      }
+      const info = document.querySelector('.info');
+      if (info) {
+        info.innerHTML = 'Сетка SELL-лимитов выше цены. Ловит откат после пампа.';
+      }
+      if ($('shukinFilterText')) {
+        $('shukinFilterText').textContent = 'выкл';
+        $('shukinFilterText').style.color = 'var(--muted)';
+      }
+      log('Режим Щукина ВЫКЛ', 'info');
+      toast('Режим Щукина', 'Отключен', false);
+    }
+  }
+
+  // ---------- SELL GRID CYCLE ----------
+  async function runSellGridCycle(symbol, mid, inst, volOk, isSpike, candles) {
+    symbol = (symbol || $('symbol').value).toUpperCase().trim();
+    const category = $('category').value;
+    const isActive = symbol === ($('symbol').value || '').toUpperCase().trim();
+    const useCandles = candles || state.candles;
+    const levels = parseInt($('gridLevels').value) || 4;
+    const shukin = state.shukinMode;
+    // Щукин: порог шага сетки от 1%, тейк от 0.7%, аварийный SL 10%
+    let gridStepPctVal = parseFloat($('gridStepPct').value) || 0.25;
+    let tpPctVal = parseFloat($('tpPct').value) || 0.3;
+    let slPctVal = parseFloat($('slPct').value) || 1.0;
+    if (shukin) {
+      if (gridStepPctVal < 1) gridStepPctVal = 1;
+      if (tpPctVal < 0.7) tpPctVal = 0.7;
+      if (slPctVal < 10) slPctVal = 10;
+    }
+    const gridStep = gridStepPctVal / 100;
+    const tpPct = tpPctVal / 100;
+    const slPct = slPctVal / 100;
+    const usdt = parseFloat($('orderUsdt').value) || 20;
+
+    let qty = roundToStep(usdt / mid, inst.qtyStep);
+    if (qty < parseFloat(inst.minQty)) qty = parseFloat(inst.minQty);
+
+    const live = $('liveEnabled').checked;
+    let pos = { side: null, size: 0, avgPrice: 0, unrealisedPnl: 0 };
+    if (live) pos = await getPosition(symbol, category);
+    if (isActive) updatePosUI(pos);
+
+    // целевые уровни SELL выше mid
+    const targets = [];
+    for (let i = 1; i <= levels; i++) {
+      targets.push(roundToStep(mid * (1 + gridStep * i), inst.tickSize));
+    }
+    if (isActive) drawLevels(mid, targets, pos);
+
+    if (!live) {
+      log(`[SIM${shukin ? ' Щукин' : ''}] Sell grid ${levels} ур. @ ${fmt(mid)}`, 'info');
+      return;
+    }
+
+    // если уже в шорте — TP / SL
+    if (pos.size > 0 && pos.side === 'Sell') {
+      const entry = pos.avgPrice || mid;
+      const movePct = (entry - mid) / entry;
+
+      if (movePct >= tpPct) {
+        const pnl = pos.unrealisedPnl || 0;
+        log(`🎯 TP ${(movePct * 100).toFixed(2)}%${shukin ? ' (Щукин short take)' : ''}`, 'ok');
+        await closeMarket(symbol, category);
+        await cancelOurOrders(symbol, category);
+        recordTrade(pnl);
+        state.lastTradeAt = Date.now();
+        return;
+      }
+      if (movePct <= -slPct) {
+        const pnl = pos.unrealisedPnl || 0;
+        log(`🚨 SL ${(movePct * 100).toFixed(2)}%`, 'err');
+        await closeMarket(symbol, category);
+        await cancelOurOrders(symbol, category);
+        recordTrade(pnl);
+        state.lastTradeAt = Date.now();
+        return;
+      }
+      if ($('makerExit').checked) {
+        const open = await getOpenOrders(symbol, category);
+        const hasTp = open.some(o => (o.orderLinkId || '').startsWith('sg_tp_'));
+        if (!hasTp) {
+          await placeMakerExit(symbol, category, pos, entry * (1 - tpPct), inst);
+        }
+      }
+      // обычный режим: в позиции не ставим новые входы
+      // режим Щукина: продолжаем добирать sell выше (усреднение)
+      if (!shukin) return;
+    }
+
+    if (isSpike || !volOk) {
+      $('statusText').textContent = isSpike ? 'SPIKE PAUSE' : 'VOL FILTER';
+      return;
+    }
+
+    // Фильтр Щукина: OI/CVD — не ставим новые sell, пока рано
+    if (shukin) {
+      let oiForSig = isActive ? state.oiData : [];
+      if (state.cycles % 5 === 0) {
+        try {
+          const oi = await getOpenInterest(symbol, category, $('interval').value, 50);
+          if (oi && oi.length) {
+            if (isActive) state.oiData = oi;
+            oiForSig = oi;
+          }
+        } catch (e) {}
+      }
+      const sig = analyzeShukinContext(useCandles, oiForSig);
+      if (isActive) updateShukinUI(sig);
+      if (!sig.allowShort) {
+        if (isActive) $('statusText').textContent = 'ЩУКИН ЖДАТЬ';
+        if (!(pos.size > 0 && pos.side === 'Sell')) return;
+        return;
+      }
+    }
+
+    // синхронизируем сетку: снимаем лишнее, добавляем дыры
+    const open = await getOpenOrders(symbol, category);
+    const ourSells = open.filter(o =>
+      (o.orderLinkId || '').startsWith('sg_s_') && o.side === 'Sell'
+    );
+
+    const tol = mid * gridStep * 0.35;
+    const matched = new Set();
+    const toCancel = [];
+
+    for (const o of ourSells) {
+      const px = parseFloat(o.price);
+      if (!px || isNaN(px)) { toCancel.push(o); continue; }
+      let found = null;
+      for (const t of targets) {
+        if (Math.abs(px - t) <= tol) { found = t; break; }
+      }
+      if (found != null && !matched.has(found)) matched.add(found);
+      else toCancel.push(o);
+    }
+
+    for (const o of toCancel) {
+      try {
+        await signedRequest('POST', '/v5/order/cancel', {
+          category, symbol, orderId: o.orderId
+        });
+        log('Снят лишний @ ' + o.price, 'info');
+      } catch (e) {}
+    }
+
+    for (const px of targets) {
+      if (matched.has(px)) continue;
+      // в режиме Щукина на уже открытой позиции не вешаем SL на каждый лимит —
+      // риск контролируем общим SL по avg entry
+      const tp = roundToStep(px * (1 - tpPct), inst.tickSize);
+      const sl = (!shukin || pos.size === 0)
+        ? roundToStep(px * (1 + slPct), inst.tickSize)
+        : null;
+      await placeSellLimit(symbol, category, qty, px, tp, sl, inst);
+    }
+    state.lastGridMid = mid;
+  }
+
+  // ---------- WATCH CARDS (multi-symbol) ----------
+  function ensureWatch(symbol) {
+    symbol = symbol.toUpperCase().trim();
+    if (!state.watches[symbol]) {
+      state.watches[symbol] = {
+        symbol,
+        mid: 0,
+        candles: [],
+        priceHistory: [],
+        pos: { side: null, size: 0, avgPrice: 0, unrealisedPnl: 0 },
+        orders: 0,
+        ourOrders: 0,
+        isSpike: false,
+        volOk: true,
+        status: '—',
+        atrPct: null,
+        rsi: null,
+        miniChart: null,
+        miniSeries: null
+      };
+    }
+    return state.watches[symbol];
+  }
+
+  function destroyWatchMini(w) {
+    if (w.miniChart) {
+      try { w.miniChart.remove(); } catch (e) {}
+      w.miniChart = null;
+      w.miniSeries = null;
+    }
+  }
+
+  function initWatchMini(symbol, el) {
+    const w = state.watches[symbol];
+    if (!w || !el || !window.LightweightCharts) return;
+    destroyWatchMini(w);
+    try {
+      w.miniChart = LightweightCharts.createChart(el, {
+        layout: { background: { color: '#0d1117' }, textColor: '#848e9c' },
+        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+        rightPriceScale: { visible: false },
+        timeScale: { visible: false },
+        width: el.clientWidth || 180,
+        height: 72,
+        handleScroll: false,
+        handleScale: false
+      });
+      w.miniSeries = w.miniChart.addAreaSeries({
+        lineColor: '#f6465d',
+        topColor: 'rgba(246,70,93,0.25)',
+        bottomColor: 'rgba(246,70,93,0.02)',
+        lineWidth: 1.5
+      });
+      if (w.candles && w.candles.length) {
+        w.miniSeries.setData(w.candles.map(c => ({ time: c.time, value: c.close })));
+        w.miniChart.timeScale().fitContent();
+      }
+    } catch (e) {}
+  }
+
+  function updateWatchMini(symbol) {
+    const w = state.watches[symbol];
+    if (!w || !w.miniSeries || !w.candles.length) return;
+    try {
+      w.miniSeries.setData(w.candles.map(c => ({ time: c.time, value: c.close })));
+      w.miniChart.timeScale().fitContent();
+    } catch (e) {}
+  }
+
+  function renderWatchCards() {
+    const grid = $('watchGrid');
+    if (!grid) return;
+    const syms = Object.keys(state.watches).sort();
+    if (!syms.length) {
+      // destroy all minis
+      Object.values(state.watches).forEach(destroyWatchMini);
+      grid.innerHTML = '<div class="watch-empty" id="watchEmpty">Нет активных. После ордеров/позиций или «Синхр. с биржи» появятся карточки. При старте бота всё подтягивается автоматически.</div>';
+      return;
+    }
+    const active = ($('symbol').value || '').toUpperCase().trim();
+    // destroy minis for removed symbols first
+    const existingEls = {};
+    grid.querySelectorAll('.watch-card').forEach(el => {
+      const s = el.getAttribute('data-sym');
+      if (s && !state.watches[s]) {
+        destroyWatchMini({ miniChart: null }); // already gone
+        el.remove();
+      }
+    });
+
+    grid.innerHTML = syms.map(sym => {
+      const w = state.watches[sym];
+      const short = sym.replace(/USDT$/, '');
+      const cls = [
+        'watch-card',
+        sym === active ? 'active' : '',
+        w.isSpike ? 'spike' : ''
+      ].filter(Boolean).join(' ');
+      let badge = '<span class="wc-badge">idle</span>';
+      if (w.pos && w.pos.size > 0) badge = '<span class="wc-badge pos">SHORT</span>';
+      else if (w.ourOrders > 0) badge = '<span class="wc-badge ord">' + w.ourOrders + ' ord</span>';
+      else if (w.orders > 0) badge = '<span class="wc-badge">' + w.orders + ' ord</span>';
+      if (w.isSpike) badge += ' <span class="wc-badge warn">SPIKE</span>';
+      const upnl = w.pos && w.pos.size ? w.pos.unrealisedPnl : null;
+      const upnlCls = upnl == null ? '' : (upnl >= 0 ? 'up' : 'dn');
+      const upnlTxt = upnl == null ? '—' : ((upnl >= 0 ? '+' : '') + upnl.toFixed(2));
+      return `<div class="${cls}" data-sym="${sym}">
+        <div class="wc-top"><span class="wc-sym">${short}</span><span>${badge}</span></div>
+        <div class="wc-mini" id="mini_${sym}"></div>
+        <div class="wc-meta">
+          <span>Mid <b>${w.mid ? fmt(w.mid) : '—'}</b></span>
+          <span>uPnL <b class="${upnlCls}">${upnlTxt}</b></span>
+          <span>RSI <b>${w.rsi != null ? w.rsi.toFixed(0) : '—'}</b></span>
+          <span>${w.status || '—'}</span>
+        </div>
+      </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.watch-card').forEach(el => {
+      const sym = el.getAttribute('data-sym');
+      el.onclick = async () => {
+        $('symbol').value = sym;
+        renderTargets();
+        renderWatchCards();
+        log('Карточка → ' + sym, 'info');
+        await loadChart();
+      };
+      const miniEl = $('mini_' + sym);
+      if (miniEl) {
+        // re-init mini each render (DOM was rebuilt)
+        const w = state.watches[sym];
+        if (w) {
+          w.miniChart = null;
+          w.miniSeries = null;
+          initWatchMini(sym, miniEl);
+        }
+      }
+    });
+  }
+
+  /** Подтянуть с биржи все позиции + ордера → карточки */
+  async function syncFromExchange() {
+    const category = $('category').value;
+    const keys = getKeys();
+    if (!keys.key || !keys.secret) {
+      log('Синхр: нужны API ключи', 'err');
+      toast('Синхр', 'Нет API ключей', false);
+      return;
+    }
+    try {
+      setConn(null, 'синхр…');
+      const [positions, orders] = await Promise.all([
+        getAllPositions(category),
+        getAllOpenOrders(category)
+      ]);
+      const bySym = {};
+      for (const p of positions) {
+        const s = p.symbol;
+        bySym[s] = bySym[s] || { pos: null, orders: [], our: 0 };
+        bySym[s].pos = {
+          side: p.side,
+          size: parseFloat(p.size),
+          avgPrice: parseFloat(p.avgPrice),
+          unrealisedPnl: parseFloat(p.unrealisedPnl || 0)
+        };
+      }
+      for (const o of orders) {
+        const s = o.symbol;
+        bySym[s] = bySym[s] || { pos: null, orders: [], our: 0 };
+        bySym[s].orders.push(o);
+        if ((o.orderLinkId || '').startsWith('sg_')) bySym[s].our++;
+      }
+
+      // remove watches that no longer have pos/orders (keep selected)
+      const active = ($('symbol').value || '').toUpperCase().trim();
+      for (const s of Object.keys(state.watches)) {
+        if (!bySym[s] && s !== active) {
+          destroyWatchMini(state.watches[s]);
+          delete state.watches[s];
+        }
+      }
+
+      const interval = $('interval').value;
+      for (const s of Object.keys(bySym)) {
+        const w = ensureWatch(s);
+        const info = bySym[s];
+        if (info.pos) w.pos = info.pos;
+        else w.pos = { side: null, size: 0, avgPrice: 0, unrealisedPnl: 0 };
+        w.orders = info.orders.length;
+        w.ourOrders = info.our;
+        w.status = w.pos.size ? 'POS' : (w.ourOrders ? 'GRID' : 'ORD');
+        // mini candles
+        try {
+          const kl = await getKlines(s, category, interval, 40);
+          w.candles = sanitizeCandles(kl);
+          if (w.candles.length) {
+            w.mid = w.candles[w.candles.length - 1].close;
+            w.rsi = calculateRSI(w.candles, 14);
+            w.atrPct = estimateAtrPct(w.candles, 14);
+          }
+        } catch (e) {}
+      }
+
+      // always ensure current symbol is watched when bot runs
+      if (active) ensureWatch(active);
+
+      renderWatchCards();
+      setConn(true, 'OK');
+      const n = Object.keys(state.watches).length;
+      log('Синхр биржи: ' + n + ' монет (поз: ' + positions.length + ', орд: ' + orders.length + ')', 'ok');
+      toast('Синхр', n + ' активных монет', true);
+    } catch (e) {
+      setConn(false, 'ошибка');
+      log('Синхр: ' + e.message, 'err');
+      toast('Синхр', e.message, false);
+    }
+  }
+
+  /** Один символ: mid, spike, vol, grid — защита на каждом */
+  async function processSymbol(symbol) {
+    const category = $('category').value;
+    const w = ensureWatch(symbol);
+    const isActive = symbol === ($('symbol').value || '').toUpperCase().trim();
+
+    const book = await getOrderBook(symbol, category);
+    if (!book.bids.length || !book.asks.length) throw new Error(symbol + ': пустой стакан');
+    const mid = (book.bids[0] + book.asks[0]) / 2;
+    w.mid = mid;
+    const inst = await getInstrument(symbol, category);
+
+    // spike per symbol
+    const superSpike = $('superSpikeProtect').checked;
+    const maxSpike = (parseFloat($('maxSpikePct').value) || 0.4) / 100;
+    w.priceHistory.push(mid);
+    if (w.priceHistory.length > 5) w.priceHistory.shift();
+    let isSpike = false;
+    if (superSpike && w.priceHistory.length >= 3) {
+      const old = w.priceHistory[0];
+      if (Math.abs(mid - old) / old >= maxSpike) isSpike = true;
+    }
+    w.isSpike = isSpike;
+
+    // candles for this symbol
+    let candles = w.candles;
+    if (!candles.length || state.cycles % 3 === 0) {
+      try {
+        const kl = await getKlines(symbol, category, $('interval').value, 60);
+        candles = sanitizeCandles(kl);
+        w.candles = candles;
+        updateWatchMini(symbol);
+      } catch (e) {}
+    }
+    if (isActive && (!state.candles.length || state.chartSymbol !== symbol)) {
+      try { await loadChart(); } catch (e) {}
+      candles = state.candles.length ? state.candles : candles;
+    }
+    if (isActive && state.candles.length) candles = state.candles;
+
+    w.atrPct = estimateAtrPct(candles, 14);
+    w.rsi = calculateRSI(candles, 14);
+
+    let volOk = true;
+    if ($('volFilter').checked && w.atrPct != null) {
+      const minA = (parseFloat($('minAtrPct').value) || 0.15) / 100;
+      const maxA = (parseFloat($('maxAtrPct').value) || 4) / 100;
+      if (w.atrPct < minA || w.atrPct > maxA) volOk = false;
+    }
+    w.volOk = volOk;
+    w.status = isSpike ? 'SPIKE' : (!volOk ? 'VOL' : 'OK');
+
+    if (isActive) {
+      $('midText').textContent = fmt(mid);
+      const spikeEl = $('spikeText');
+      spikeEl.textContent = isSpike ? 'SPIKE!' : 'OK';
+      spikeEl.style.color = isSpike ? 'var(--red)' : 'var(--green)';
+      $('atrText').textContent = w.atrPct != null ? (w.atrPct * 100).toFixed(3) + '%' : '—';
+      $('rsiText').textContent = w.rsi != null ? w.rsi.toFixed(1) : '—';
+    }
+
+    // live: refresh pos/orders count
+    if ($('liveEnabled').checked) {
+      try {
+        w.pos = await getPosition(symbol, category);
+        const open = await getOpenOrders(symbol, category);
+        w.orders = open.length;
+        w.ourOrders = open.filter(o => (o.orderLinkId || '').startsWith('sg_')).length;
+      } catch (e) {}
+    }
+
+    await runSellGridCycle(symbol, mid, inst, volOk, isSpike, candles);
+  }
+
+  /**
+   * Каждый цикл: подтянуть ВСЕ открытые позиции + ордера с биржи
+   * и держать их в watches — бот контролирует их одновременно.
+   */
+  async function refreshOpenUniverse() {
+    const category = $('category').value;
+    const active = ($('symbol').value || '').toUpperCase().trim();
+    if (!$('liveEnabled').checked) {
+      if (active) ensureWatch(active);
+      return Object.keys(state.watches);
+    }
+    try {
+      const [positions, orders] = await Promise.all([
+        getAllPositions(category),
+        getAllOpenOrders(category)
+      ]);
+      const alive = new Set();
+      if (active) alive.add(active);
+
+      for (const p of positions) {
+        const s = (p.symbol || '').toUpperCase();
+        if (!s) continue;
+        alive.add(s);
+        const w = ensureWatch(s);
+        w.pos = {
+          side: p.side,
+          size: parseFloat(p.size),
+          avgPrice: parseFloat(p.avgPrice),
+          unrealisedPnl: parseFloat(p.unrealisedPnl || 0)
+        };
+        w.status = 'POS';
+      }
+
+      const ordCount = {};
+      const ourCount = {};
+      for (const o of orders) {
+        const s = (o.symbol || '').toUpperCase();
+        if (!s) continue;
+        alive.add(s);
+        ordCount[s] = (ordCount[s] || 0) + 1;
+        if ((o.orderLinkId || '').startsWith('sg_')) ourCount[s] = (ourCount[s] || 0) + 1;
+      }
+      for (const s of alive) {
+        const w = ensureWatch(s);
+        w.orders = ordCount[s] || 0;
+        w.ourOrders = ourCount[s] || 0;
+        if (!(w.pos && w.pos.size > 0)) {
+          w.status = w.ourOrders ? 'GRID' : (w.orders ? 'ORD' : w.status);
+        }
+      }
+
+      // убрать карточки без позиции и без ордеров (кроме выбранного символа)
+      for (const s of Object.keys(state.watches)) {
+        if (alive.has(s)) continue;
+        destroyWatchMini(state.watches[s]);
+        delete state.watches[s];
+      }
+
+      return [...alive];
+    } catch (e) {
+      log('refresh universe: ' + e.message, 'err');
+      if (active) ensureWatch(active);
+      return Object.keys(state.watches);
+    }
+  }
+
+  // ---------- MAIN LOOP ----------
+  async function runCycle() {
+    if (state.busy) return;
+    state.busy = true;
+    try {
+      const symbol = $('symbol').value.toUpperCase().trim();
+      const category = $('category').value;
+      $('statusText').textContent = 'цикл…';
+
+      ensureDayKey();
+      const maxLoss = parseFloat($('maxDailyLoss').value) || 0;
+      if (maxLoss > 0 && state.dayPnl <= -Math.abs(maxLoss)) {
+        $('statusText').textContent = 'DAILY LIMIT';
+        if ($('liveEnabled').checked) {
+          const all = Object.keys(state.watches);
+          for (const s of all) {
+            try { await cancelOurOrders(s, category); } catch (e) {}
+          }
+          try { await cancelOurOrders(symbol, category); } catch (e) {}
+        }
+        state.cycles++;
+        $('cyclesText').textContent = String(state.cycles);
+        return;
+      }
+
+      // 1) Все открытые позиции/ордера с биржи → в контроль
+      const list = await refreshOpenUniverse();
+      if (!list.length && symbol) {
+        ensureWatch(symbol);
+        list.push(symbol);
+      }
+
+      // 2) Параллельно: защита + TP/SL + grid на КАЖДОЙ монете
+      const results = await Promise.allSettled(list.map(s => processSymbol(s)));
+      let ok = 0, fail = 0;
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          fail++;
+          log(list[i] + ': ' + (r.reason?.message || r.reason), 'err');
+        } else ok++;
+      });
+
+      renderWatchCards();
+
+      state.cycles++;
+      $('cyclesText').textContent = String(state.cycles);
+      if (state.running) {
+        const posN = list.filter(s => state.watches[s]?.pos?.size > 0).length;
+        const spikes = list.filter(s => state.watches[s]?.isSpike).length;
+        $('statusText').textContent =
+          (state.shukinMode ? 'RUN ЩУКИН' : 'RUN GRID') +
+          ' · ' + list.length + ' пар' +
+          (posN ? ' · POS×' + posN : '') +
+          (spikes ? ' · SPIKE×' + spikes : '');
+      }
+      setConn(true, 'OK');
+    } catch (e) {
+      log(e.message || String(e), 'err');
+      setConn(false, 'error');
+      $('statusText').textContent = 'ERROR';
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  async function startBot() {
+    stopBot(false);
+    state.running = true;
+    state.priceHistory = [];
+    state.lastGridMid = 0;
+    ensureDayKey();
+    saveKeys();
+    const sec = Math.max(2, parseInt($('intervalSec').value) || 3);
+    setRun(true);
+    $('statusText').textContent = 'SYNC…';
+    // при старте — сразу все позиции с биржи
+    try { await syncFromExchange(); } catch (e) {}
+    try { await refreshOpenUniverse(); } catch (e) {}
+    ensureWatch(($('symbol').value || 'BTCUSDT').toUpperCase().trim());
+    const n = Object.keys(state.watches).length;
+    log(`START multi · ${sec}s · live=${$('liveEnabled').checked} · контроль ${n} монет`, 'ok');
+    $('statusText').textContent = 'RUN';
+    runCycle();
+    state.timer = setInterval(runCycle, sec * 1000);
+    toast('Бот', 'Все позиции под контролем', true);
+  }
+
+  function stopBot(cancel) {
+    state.running = false;
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    setRun(false);
+    $('statusText').textContent = 'ВЫКЛ';
+    if (cancel && $('liveEnabled').checked) {
+      const category = $('category').value;
+      // не снимаем все ордера на стоп без явного — только текущий символ (как раньше)
+      cancelOurOrders(
+        $('symbol').value.toUpperCase().trim(),
+        category
+      ).catch(() => {});
+    }
+    log('STOP', 'info');
+  }
+
+  // ---------- wire ----------
+  loadKeys();
+  loadTargets();
+  initChart();
+  renderTargets();
+
+  $('saveKeysBtn').onclick = saveKeys;
+  $('clearTargetsBtn').onclick = clearTargets;
+  $('testConnBtn').onclick = async () => {
+    try {
+      const symbol = $('symbol').value.toUpperCase().trim();
+      await getOrderBook(symbol, $('category').value);
+      setConn(true, 'public OK');
+      const keys = getKeys();
+      if (keys.key && keys.secret) {
+        await getPosition(symbol, $('category').value);
+        setConn(true, 'private OK');
+        toast('Связь', 'Public + Private OK', true);
+      } else {
+        toast('Связь', 'Public OK (нет ключей)', true);
+      }
+    } catch (e) {
+      setConn(false, 'fail');
+      toast('Ошибка', e.message, false);
+      log(e.message, 'err');
+    }
+  };
+  $('loadChartBtn').onclick = () => loadChart();
+  $('scanBtn').onclick = scanPump;
+  if ($('ultraVolBtn')) $('ultraVolBtn').onclick = scanUltraVol1m;
+  $('shukinBtn').onclick = toggleShukin;
+  if ($('syncWatchBtn')) $('syncWatchBtn').onclick = () => syncFromExchange();
+  $('symbol').addEventListener('change', async () => {
+    const sym = ($('symbol').value || '').toUpperCase().trim();
+    $('symbol').value = sym;
+    renderTargets();
+    await loadChart();
+  });
+  $('symbol').addEventListener('keydown', async e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const sym = ($('symbol').value || '').toUpperCase().trim();
+      $('symbol').value = sym;
+      renderTargets();
+      await loadChart();
+    }
+  });
+  $('interval').addEventListener('change', () => loadChart());
+  $('startBtn').onclick = startBot;
+  $('stopBtn').onclick = () => stopBot(true);
+  $('onceBtn').onclick = () => runCycle();
+  $('refreshPosBtn').onclick = async () => {
+    try {
+      const pos = await getPosition(
+        $('symbol').value.toUpperCase().trim(),
+        $('category').value
+      );
+      updatePosUI(pos);
+    } catch (e) { log(e.message, 'err'); }
+  };
+  $('closePosBtn').onclick = async () => {
+    try {
+      const symbol = $('symbol').value.toUpperCase().trim();
+      const category = $('category').value;
+      const pos = await getPosition(symbol, category);
+      await closeMarket(symbol, category);
+      if (pos && pos.size > 0) recordTrade(pos.unrealisedPnl || 0);
+      updatePosUI({ size: 0 });
+    } catch (e) { log(e.message, 'err'); }
+  };
+
+  loadChart();
+})();
+</script>
+</body>
+</html>

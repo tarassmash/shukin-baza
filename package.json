@@ -1,0 +1,13 @@
+{
+  "name": "sell-grid-shukin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sell Grid — Bybit Short (режим Щукина)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
