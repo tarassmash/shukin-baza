@@ -80,11 +80,12 @@ async function load() {
       ['Циклов', s.cycles],
       ['Ошибка', s.lastError ? `<span class="neg">${esc(s.lastError)}</span>` : '<span class="mut">нет</span>'],
       ['PnL сегодня (UTC)', `<span class="${s.day.pnl >= 0 ? 'pos' : 'neg'}">${s.day.pnl >= 0 ? '+' : ''}${s.day.pnl.toFixed(2)} USDT</span> · ${s.day.trades} сделок`],
-      ['Лимит убытка / день', c.maxDailyLoss + ' USDT'],
-      ['Сетка', `${c.gridStepPct}% × ${c.gridLevels} · ${c.orderUsdt} USDT/ур`],
+      ['Баланс USDT', s.balance ? s.balance.toFixed(2) : '—'],
+      ['Лимит убытка / день', `${c.maxDailyLoss} USDT${c.maxDailyLossPct > 0 ? ' · ' + c.maxDailyLossPct + '% баланса' : ''}`],
+      ['Сетка', `${c.gridStepPct}% × ${c.gridLevels} · ${c.orderUsdt} USDT/ур${c.orderPct > 0 ? ' · ' + c.orderPct + '% баланса' : ''}`],
       ['TP / SL', `${c.tpPct}% / ${c.slPct}%`],
       ['Макс. удержание', c.maxHoldMin + ' мин'],
-      ['Макс. в одну монету', c.maxPosUsdt + ' USDT'],
+      ['Макс. в одну монету', `${c.maxPosUsdt} USDT${c.maxPosPct > 0 ? ' · ' + c.maxPosPct + '% баланса' : ''}`],
       ['Монет / позиций', `${c.maxSymbols} / ${c.maxOpenPositions}`],
       ['Открытых ордеров', s.ordersCount]
     ].map(([k, v]) => `<div class="kv"><span>${k}</span><b>${v}</b></div>`).join('');

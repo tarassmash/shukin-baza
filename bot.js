@@ -38,8 +38,13 @@ const CFG = {
   maxOpenPositions: Math.max(1, Math.round(num('MAX_OPEN_POSITIONS', 3))),
   maxPosUsdt: num('MAX_POS_USDT', 120),       // потолок добора в одну монету
   scanEveryMin: Math.max(1, num('SCAN_EVERY_MIN', 5)),
-  cooldownMin: num('COOLDOWN_MIN', 30)        // пауза по монете после стопа/лимита времени
+  cooldownMin: num('COOLDOWN_MIN', 30),       // пауза по монете после стопа/лимита времени
+  // --- размеры в % от баланса USDT (если > 0 — главнее долларовых ORDER_USDT / MAX_POS_USDT / MAX_DAILY_LOSS) ---
+  orderPct: num('ORDER_PCT', 0),              // % баланса на один уровень сетки
+  maxPosPct: num('MAX_POS_PCT', 0),           // % баланса — потолок добора в одну монету
+  maxDailyLossPct: num('MAX_DAILY_LOSS_PCT', 0) // % баланса на начало суток UTC — дневной лимит убытка
 };
+const USD = { orderUsdt: CFG.orderUsdt, maxPosUsdt: CFG.maxPosUsdt, maxDailyLoss: CFG.maxDailyLoss }; // долларовые значения из переменных
 if (CFG.shukin) {
   if (CFG.gridStepPct < 1) CFG.gridStepPct = 1;
   if (CFG.tpPct < 0.7) CFG.tpPct = 0.7;
@@ -61,6 +66,9 @@ const S = {
   dayTrades: 0,
   lastPnlFetch: 0,
   lastScanAt: 0,
+  balance: 0,           // баланс USDT (walletBalance)
+  balanceAt: 0,
+  dayStartBal: 0,       // баланс на начало суток UTC — от него считается дневной лимит в %
   hotList: [],          // последние результаты скана
   targets: [],          // монеты, где бот ставит сетку
   cooldown: {},         // symbol -> until ts
@@ -479,11 +487,48 @@ async function maybeRescan() {
   }
 }
 
+// ---------------------------------------------------------------- баланс и размеры в % от него
+async function getBalance() {
+  const j = await signedRequest('GET', '/v5/account/wallet-balance', { accountType: 'UNIFIED', coin: 'USDT' });
+  if (j.retCode !== 0) throw new Error('balance: ' + j.retMsg);
+  const c = (j.result?.list?.[0]?.coin || []).find(x => x.coin === 'USDT');
+  return parseFloat(c?.walletBalance || 0) || 0;
+}
+
+// Раз в минуту: баланс → ORDER_USDT / MAX_POS_USDT / MAX_DAILY_LOSS из процентов.
+// Пополнил счёт — сетка больше; после минусов — меньше. Без процентов работают долларовые значения.
+async function refreshSizing() {
+  if (Date.now() - S.balanceAt < 60000) return;
+  S.balanceAt = Date.now();
+  const bal = await getBalance();
+  if (!(bal > 0)) return;
+  S.balance = bal;
+  // начало суток: баланс сейчас минус то, что бот уже сделал за сегодня (переживает перезапуск)
+  if (!S.dayStartBal) S.dayStartBal = bal - S.dayPnl;
+  const r2 = x => Math.round(x * 100) / 100;
+  const next = {
+    orderUsdt: CFG.orderPct > 0 ? r2(bal * CFG.orderPct / 100) : USD.orderUsdt,
+    maxPosUsdt: CFG.maxPosPct > 0 ? r2(bal * CFG.maxPosPct / 100) : USD.maxPosUsdt,
+    maxDailyLoss: CFG.maxDailyLossPct > 0 ? r2(S.dayStartBal * CFG.maxDailyLossPct / 100) : USD.maxDailyLoss
+  };
+  const changed = Object.keys(next).some(k => Math.abs(next[k] - CFG[k]) > Math.max(0.01, Math.abs(CFG[k]) * 0.01));
+  Object.assign(CFG, next);
+  if (changed || !S.sizedOnce) {
+    S.sizedOnce = true;
+    log(`Баланс ${bal.toFixed(2)} USDT → ${CFG.orderUsdt} USDT/ур, макс. в монету ${CFG.maxPosUsdt} USDT, ` +
+      `дневной лимит ${CFG.maxDailyLoss} USDT` + (CFG.orderPct > 0 || CFG.maxPosPct > 0 || CFG.maxDailyLossPct > 0
+        ? ` (в % от баланса: ${CFG.orderPct || '—'} / ${CFG.maxPosPct || '—'} / ${CFG.maxDailyLossPct || '—'})` : ' (фиксированные $)'));
+  }
+}
+
 // ---------------------------------------------------------------- дневной PnL (с биржи)
 async function refreshDayPnl() {
   const now = new Date();
   const k = now.toISOString().slice(0, 10);
-  if (S.dayKey !== k) { S.dayKey = k; S.dayPnl = 0; S.dayTrades = 0; S.lastPnlFetch = 0; }
+  if (S.dayKey !== k) {
+    if (S.dayKey) S.dayStartBal = S.balance;   // новые сутки: лимит от баланса на их начало
+    S.dayKey = k; S.dayPnl = 0; S.dayTrades = 0; S.lastPnlFetch = 0;
+  }
   if (Date.now() - S.lastPnlFetch < 60000) return;
   S.lastPnlFetch = Date.now();
   const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -676,6 +721,7 @@ async function cycle() {
     if (!CFG.key || !CFG.secret) { S.lastError = 'нет API ключей (BYBIT_API_KEY / BYBIT_API_SECRET)'; return; }
 
     try { await refreshDayPnl(); } catch (e) { log(e.message, 'err'); }
+    try { await refreshSizing(); } catch (e) { log('размеры от баланса: ' + e.message, 'err'); }
     const dailyBlocked = CFG.maxDailyLoss > 0 && S.dayPnl <= -Math.abs(CFG.maxDailyLoss);
 
     const [positions, orders] = await Promise.all([getAllPositions(), getAllOpenOrders()]);
@@ -786,6 +832,8 @@ function status() {
     cycles: S.cycles,
     lastCycleAt: S.lastCycleAt,
     lastError: S.lastError,
+    balance: S.balance,
+    dayStartBal: S.dayStartBal,
     day: { key: S.dayKey, pnl: S.dayPnl, trades: S.dayTrades, blocked: CFG.maxDailyLoss > 0 && S.dayPnl <= -Math.abs(CFG.maxDailyLoss) },
     targets: S.targets,
     hotList: S.hotList,
