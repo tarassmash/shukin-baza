@@ -39,6 +39,10 @@ const CFG = {
   max5mPct: num('MAX_5M_PCT', 0.3),     // движение за последние 5 мин не выше этого % (не шортим в моменте роста)
   // --- 24/7 управление ---
   maxHoldMin: num('MAX_HOLD_MIN', 90),        // макс. время жизни позиции
+  // --- закрытие без маркета ---
+  closeMakerSec: num('CLOSE_MAKER_SEC', 30),  // сколько сек закрывать мейкер-лимитками
+  closeRepostSec: num('CLOSE_REPOST_SEC', 1.5), // как часто переставлять лимитку закрытия
+  closeSlipTicks: num('CLOSE_SLIP_TICKS', 10),  // аварийная IOC: макс. тиков за лучшей ценой
   maxSymbols: Math.max(1, Math.round(num('MAX_SYMBOLS', 1))), // сколько монет из скана торговать одновременно
   maxOpenPositions: Math.max(1, Math.round(num('MAX_OPEN_POSITIONS', 3))),
   maxPosUsdt: num('MAX_POS_USDT', 120),       // потолок добора в одну монету
@@ -267,15 +271,51 @@ async function cancelOurOrders(symbol, orders, filterFn) {
   return ours.length;
 }
 
+async function posSize(symbol) {
+  const j = await signedRequest('GET', '/v5/position/list', { category: CFG.category, symbol });
+  if (j.retCode !== 0) throw new Error('position: ' + j.retMsg);
+  const p = (j.result?.list || []).find(x => parseFloat(x.size || 0) > 0);
+  return p ? { side: p.side, size: parseFloat(p.size) } : { side: '', size: 0 };
+}
+// Закрыть позицию БЕЗ маркета: мейкер-лимитка (PostOnly, reduceOnly) у лучшей цены, переставляется
+// каждые CLOSE_REPOST_SEC. Если за CLOSE_MAKER_SEC не вышли — аварийная IOC-лимитка через спред
+// (цена ограничена CLOSE_SLIP_TICKS тиками), повторяется до закрытия.
 async function closeMarket(pos, why) {
+  const inst = await getInstrument(pos.symbol);
+  const tick = parseFloat(inst.tickSize);
   const side = pos.side === 'Buy' ? 'Sell' : 'Buy';
-  const j = await signedRequest('POST', '/v5/order/create', {
-    category: CFG.category, symbol: pos.symbol, side,
-    orderType: 'Market', qty: String(pos.size), reduceOnly: true, positionIdx: 0,
-    orderLinkId: 'sg_close_' + (why || 'x') + '_' + Date.now()
-  });
-  if (j.retCode !== 0) throw new Error(`close ${pos.symbol}: ${j.retMsg}`);
-  log(`${pos.symbol}: позиция ${pos.side} ${pos.size} закрыта market (uPnL ${pos.unrealisedPnl.toFixed(3)})`, 'ok');
+  const tEnd = Date.now() + CFG.closeMakerSec * 1000;
+  const tHard = tEnd + 60000;
+  let tries = 0, how = 'мейкер-лимиткой';
+  while (Date.now() < tHard) {
+    const cur = await posSize(pos.symbol);
+    if (!cur.size) break;
+    const book = await getOrderBook(pos.symbol);
+    const bid = book.bids[0], ask = book.asks[0];
+    const maker = Date.now() < tEnd;
+    let px, tif;
+    if (maker) {
+      px = side === 'Buy' ? (bid + tick < ask ? bid + tick : bid) : (ask - tick > bid ? ask - tick : ask);
+      tif = 'PostOnly';
+    } else {
+      px = side === 'Buy' ? ask + tick * CFG.closeSlipTicks : bid - tick * CFG.closeSlipTicks;
+      tif = 'IOC'; how = 'аварийной IOC-лимиткой';
+    }
+    tries++;
+    const j = await signedRequest('POST', '/v5/order/create', {
+      category: CFG.category, symbol: pos.symbol, side, orderType: 'Limit',
+      qty: String(cur.size), price: String(roundToStep(px, inst.tickSize)), timeInForce: tif,
+      reduceOnly: true, positionIdx: 0, orderLinkId: 'sg_close_' + (why || 'x') + '_' + Date.now()
+    });
+    if (j.retCode !== 0) { await sleep(500); continue; }
+    if (tif === 'PostOnly') {
+      await sleep(CFG.closeRepostSec * 1000);
+      try { await cancelOrder(pos.symbol, j.result.orderId); } catch (e) {}
+    } else await sleep(400);
+  }
+  const left = (await posSize(pos.symbol)).size;
+  if (left) throw new Error(`${pos.symbol}: не удалось закрыть лимитками, осталось ${left}`);
+  log(`${pos.symbol}: позиция ${pos.side} ${pos.size} закрыта ${how} за ${tries} попыт. (uPnL ${pos.unrealisedPnl.toFixed(3)})`, 'ok');
 }
 
 async function placeMakerExit(symbol, pos, tpPrice, inst) {
@@ -626,16 +666,16 @@ async function processSymbol(symbol, ctx) {
     const movePct = (entry - mid) / entry;
     if (movePct >= tpPct) {
       log(`${symbol}: 🎯 TP ${(movePct * 100).toFixed(2)}%`, 'ok');
-      await closeMarket(pos, 'tp');
       await cancelOurOrders(symbol, orders);
+      await closeMarket(pos, 'tp');
       S.lastPnlFetch = 0;
       w.status = 'TP';
       return;
     }
     if (movePct <= -slPct) {
       log(`${symbol}: 🚨 SL ${(movePct * 100).toFixed(2)}%`, 'err');
-      await closeMarket(pos, 'sl');
       await cancelOurOrders(symbol, orders);
+      await closeMarket(pos, 'sl');
       setCooldown(symbol);
       S.targets = S.targets.filter(s => s !== symbol);
       S.lastPnlFetch = 0;
