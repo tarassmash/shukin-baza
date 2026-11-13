@@ -23,7 +23,7 @@ const CFG = {
   gridStepPct: num('GRID_STEP_PCT', 1.0),
   gridLevels: Math.max(1, Math.min(10, Math.round(num('GRID_LEVELS', 5)))),
   tpPct: num('TP_PCT', 0.7),
-  slPct: num('SL_PCT', 10),
+  slPct: num('SL_PCT', 4),
   orderUsdt: num('ORDER_USDT', 12),
   maxDailyLoss: num('MAX_DAILY_LOSS', 15),
   makerExit: env('MAKER_EXIT', '1') === '1',
@@ -32,6 +32,11 @@ const CFG = {
   volFilter: env('VOL_FILTER', '1') === '1',
   minAtrPct: num('MIN_ATR_PCT', 0.2),
   maxAtrPct: num('MAX_ATR_PCT', 5),
+  // --- фильтр тренда: шортим только падающие/слабые монеты, растущие пропускаем ---
+  trendFilter: env('TREND_FILTER', '1') === '1',
+  max24hPct: num('MAX_24H_PCT', 0),     // монета за 24ч должна быть не выше этого % (0 = только упавшие за сутки)
+  max30mPct: num('MAX_30M_PCT', 0),     // движение за последние 30 мин не выше этого %
+  max5mPct: num('MAX_5M_PCT', 0.3),     // движение за последние 5 мин не выше этого % (не шортим в моменте роста)
   // --- 24/7 управление ---
   maxHoldMin: num('MAX_HOLD_MIN', 90),        // макс. время жизни позиции
   maxSymbols: Math.max(1, Math.round(num('MAX_SYMBOLS', 1))), // сколько монет из скана торговать одновременно
@@ -48,7 +53,7 @@ const USD = { orderUsdt: CFG.orderUsdt, maxPosUsdt: CFG.maxPosUsdt, maxDailyLoss
 if (CFG.shukin) {
   if (CFG.gridStepPct < 1) CFG.gridStepPct = 1;
   if (CFG.tpPct < 0.7) CFG.tpPct = 0.7;
-  if (CFG.slPct < 10) CFG.slPct = 10;
+  if (CFG.slPct < 2) CFG.slPct = 2;
 }
 
 const BASE = env('BYBIT_BASE', '') || (CFG.testnet ? 'https://api-testnet.bybit.com' : 'https://api.bybit.com');
@@ -421,6 +426,25 @@ function lastMovePct(k, n) {
   const last = k[k.length - 1], prev = k[Math.max(0, k.length - 1 - n)];
   return prev && prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
 }
+function emaLast(k, period) {
+  if (!k || k.length < period) return null;
+  const a = 2 / (period + 1);
+  let e = k.slice(0, period).reduce((s, c) => s + c.close, 0) / period;
+  for (let i = period; i < k.length; i++) e = k[i].close * a + e * (1 - a);
+  return e;
+}
+// Слабая/падающая монета? Растущие не шортим.
+function weakCheck(k, p24) {
+  if (!CFG.trendFilter) return { ok: true, reason: '' };
+  if (!k || k.length < 31) return { ok: false, reason: 'мало свечей для тренда' };
+  const m30 = lastMovePct(k, 30), m5 = lastMovePct(k, 5);
+  const ema = emaLast(k, 20), last = k[k.length - 1].close;
+  if (p24 != null && p24 > CFG.max24hPct) return { ok: false, reason: `растёт за 24ч +${p24.toFixed(1)}%`, m30, m5 };
+  if (m30 > CFG.max30mPct) return { ok: false, reason: `растёт за 30м +${m30.toFixed(2)}%`, m30, m5 };
+  if (m5 > CFG.max5mPct) return { ok: false, reason: `растёт за 5м +${m5.toFixed(2)}%`, m30, m5 };
+  if (ema != null && last > ema) return { ok: false, reason: 'цена выше EMA20 — не слабая', m30, m5 };
+  return { ok: true, reason: `слабая: 30м ${m30.toFixed(2)}%`, m30, m5 };
+}
 function volSpike(k, lb) {
   if (k.length < lb + 2) return 1;
   const last = k[k.length - 1].volume || 0;
@@ -443,6 +467,7 @@ async function scanUltraVol1m() {
   if (res.retCode !== 0 || !res.result?.list) throw new Error('Тикеры недоступны: ' + (res.retMsg || ''));
   const pool = res.result.list
     .filter(t => t.symbol.endsWith('USDT') && parseFloat(t.turnover24h || 0) > 1500000)
+    .filter(t => !CFG.trendFilter || parseFloat(t.price24hPcnt || 0) * 100 <= CFG.max24hPct)
     .sort((a, b) => Math.abs(parseFloat(b.price24hPcnt || 0)) - Math.abs(parseFloat(a.price24hPcnt || 0)))
     .slice(0, 48);
   const scored = await mapPool(pool, 6, async coin => {
@@ -457,7 +482,10 @@ async function scanUltraVol1m() {
       Math.abs(move1) * 1.5 + atrPct * 1.6 + Math.min(spike, 6) * 0.35;
     const hot = range15 >= 0.70 || range5 >= 0.45 || range1 >= 0.28 || Math.abs(move5) >= 0.40 || atrPct >= 0.22;
     if (!hot) return null;
-    return { symbol: coin.symbol, move5, range15, atrPct, rsi: calculateRSI(k, 14), score };
+    const p24 = parseFloat(coin.price24hPcnt || 0) * 100;
+    const wk = weakCheck(k, p24);
+    if (!wk.ok) return null;
+    return { symbol: coin.symbol, move5, range15, atrPct, rsi: calculateRSI(k, 14), score, p24, m30: wk.m30 };
   });
   return scored.filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 12);
 }
@@ -477,10 +505,11 @@ async function maybeRescan() {
     S.targets = next;
     if (hot.length) {
       const t = hot[0];
-      log(`Скан 1m: ${hot.length} горячих. Топ ${t.symbol} · 15m ${t.range15.toFixed(2)}% · ATR ${t.atrPct.toFixed(2)}%` +
+      log(`Скан 1m: ${hot.length} горячих${CFG.trendFilter ? ' слабых' : ''}. Топ ${t.symbol} · 15m ${t.range15.toFixed(2)}% · ATR ${t.atrPct.toFixed(2)}%` +
+        (t.p24 != null ? ` · 24ч ${t.p24.toFixed(1)}% · 30м ${t.m30.toFixed(2)}%` : '') +
         (changed ? ` → цели: ${next.join(', ') || '—'}` : ''), changed ? 'ok' : undefined);
     } else {
-      log('Скан 1m: сейчас нет сильных движений');
+      log(CFG.trendFilter ? 'Скан 1m: нет волатильных падающих/слабых монет' : 'Скан 1m: сейчас нет сильных движений');
     }
   } catch (e) {
     log('Скан: ' + e.message, 'err');
@@ -663,6 +692,19 @@ async function processSymbol(symbol, ctx) {
   }
   if (isSpike || !volOk) { w.status = (pos ? 'SHORT · ' : '') + (isSpike ? 'SPIKE пауза' : 'ATR фильтр'); return; }
 
+  // монета пошла вверх — не шортим и не доливаем: снимаем сетку
+  if (CFG.trendFilter) {
+    const wk = weakCheck(w.candles, null);
+    if (!wk.ok) {
+      if (ourSells.length) {
+        for (const o of ourSells) { try { await cancelOrder(symbol, o.orderId); } catch (e) {} }
+        log(`${symbol}: сетка снята (${wk.reason})`);
+      }
+      w.status = (pos ? 'SHORT · ' : '') + 'ЖДАТЬ: ' + wk.reason;
+      return;
+    }
+  }
+
   if (CFG.shukin) {
     if (!w.oi.length || Date.now() - w.oiAt > 15000) {
       try { const oi = await getOpenInterest(symbol, CFG.interval, 50); if (oi.length) w.oi = oi; w.oiAt = Date.now(); } catch (e) {}
@@ -805,7 +847,8 @@ async function cycle() {
 
 let timer = null;
 function start() {
-  log(`СТАРТ · ${CFG.testnet ? 'TESTNET' : 'MAINNET'} · live=${CFG.live} · Щукин=${CFG.shukin} · шаг ${CFG.gridStepPct}% × ${CFG.gridLevels} · TP ${CFG.tpPct}% · SL ${CFG.slPct}% · ${CFG.orderUsdt} USDT/ур · удержание ≤ ${CFG.maxHoldMin} мин`, 'ok');
+  log(`СТАРТ · ${CFG.testnet ? 'TESTNET' : 'MAINNET'} · live=${CFG.live} · Щукин=${CFG.shukin} · шаг ${CFG.gridStepPct}% × ${CFG.gridLevels} · TP ${CFG.tpPct}% · SL ${CFG.slPct}% · ${CFG.orderUsdt} USDT/ур · удержание ≤ ${CFG.maxHoldMin} мин` +
+    (CFG.trendFilter ? ` · только слабые: 24ч ≤ ${CFG.max24hPct}%, 30м ≤ ${CFG.max30mPct}%, 5м ≤ ${CFG.max5mPct}%, ниже EMA20` : ''), 'ok');
   if (!CFG.key || !CFG.secret) log('Нет BYBIT_API_KEY / BYBIT_API_SECRET — добавь переменные в Railway', 'err');
   if (S.paused) log('BOT_ENABLED=0 — новые сетки не ставятся, позиции под контролем');
   // проверка доступа к Bybit из региона сервера
